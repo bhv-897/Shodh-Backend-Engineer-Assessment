@@ -1,10 +1,10 @@
-started_at_utc: 2026-11-18T14:29:57.159873+00:00
-duration_seconds: 30.27
+started_at_utc: 2026-11-18T14:49:46.326112+00:00
+duration_seconds: 30.07
 concurrent_clients: 10
-requests: 1228
-p50_ms: 231.94
-p95_ms: 390.24
-p99_ms: 535.03
-requests_per_second: 40.57
+requests: 2494
+p50_ms: 117.38
+p95_ms: 147.21
+p99_ms: 172.39
+requests_per_second: 82.95
 error_count: 0
 execution_mode: docker-python
