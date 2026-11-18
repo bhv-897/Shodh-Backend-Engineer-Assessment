@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.auth import get_current_user
 from app.config import settings
-from app.models import User, Contest, ContestParticipant, ContestProblem, ProblemVersion, Submission, JudgeAttempt, Verdict, OutboxEvent
+from app.models import User, Contest, ContestParticipant, ContestProblem, ProblemVersion, Submission, JudgeAttempt, Verdict, OutboxEvent, JudgeCaseResult, TestCase
 from app.schemas import SubmissionCreate, VerdictCreate
 from app.permissions import get_role, page
 from app.services.verdicts import record_verdict
@@ -54,18 +54,30 @@ def submission_result(sid:int,u:User=Depends(get_current_user),db:Session=Depend
     s=db.get(Submission,sid)
     if not s: raise HTTPException(404,"NOT_FOUND")
     owned_or_organizer(db,u,s)
+    organizer=get_role(db,u.id,db.get(Contest,s.contest_id).organization_id) in {"owner","organizer"}
     attempt=db.get(JudgeAttempt,s.authoritative_attempt_id) if s.authoritative_attempt_id else db.scalar(
         select(JudgeAttempt).where(JudgeAttempt.submission_id==sid).order_by(JudgeAttempt.attempt_number.desc(),JudgeAttempt.id.desc()).limit(1)
     )
     if not attempt:
-        return {"submission_id":s.id,"status":s.status,"attempt":None}
+        return {"submission_id":s.id,"status":s.status,"attempt":None,"cases":[]}
     verdict=db.scalar(select(Verdict).where(Verdict.judge_attempt_id==attempt.id))
     result=None
     if verdict:
         result={"verdict":verdict.verdict,"score":verdict.score,"execution_time_ms":verdict.execution_time_ms,
                 "memory_used_kb":verdict.memory_used_kb,"public_message":verdict.public_message}
+    case_rows=db.execute(
+        select(JudgeCaseResult,TestCase.is_hidden)
+        .join(TestCase,TestCase.id==JudgeCaseResult.test_case_id)
+        .where(JudgeCaseResult.judge_attempt_id==attempt.id)
+        .order_by(JudgeCaseResult.ordinal)
+    ).all()
+    cases=[]
+    for case_result,is_hidden in case_rows:
+        if organizer or not is_hidden:
+            cases.append({"case_number":case_result.ordinal if organizer else len(cases)+1,
+                          "verdict":case_result.verdict,"execution_time_ms":case_result.execution_time_ms})
     return {"submission_id":s.id,"status":s.status,"attempt_number":attempt.attempt_number,
-            "attempt_status":attempt.status,"result":result}
+            "attempt_status":attempt.status,"result":result,"cases":cases}
 @router.get("/submissions/{sid}/source")
 def source(sid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     s=db.get(Submission,sid)

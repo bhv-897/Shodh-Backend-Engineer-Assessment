@@ -27,6 +27,8 @@ The worker mounts `/var/run/docker.sock` so it can create one isolated container
 
 Submitted source and test input are staged as files in a unique Docker volume, mounted read-only into the execution container, and removed after the case. The source is not included in the container command line. Container logging is disabled; stdout is capped and stderr, hidden inputs and expected outputs are stored only in private diagnostics.
 
+Submission owners and contest organizers can poll `GET /api/v1/submissions/{id}/result`. It returns the attempt status, overall verdict and safe per-case verdict/timing data. Participants see public cases only; organizers can also see hidden case verdicts. Case inputs, expected outputs and stderr are never returned by this endpoint.
+
 ## Known limits
 
 Rejudge, submission idempotency keys, leaderboard load tests and Stage 2 execution on a hardened multi-tenant sandbox are not implemented. Abandoned worker leases are retried at most three times; after that the attempt is completed as `JUDGE_INFRA_FAILURE`. Retry recovery depends on the worker sharing the same Docker daemon so it can clean up containers from the expired lease.

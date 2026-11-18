@@ -9,7 +9,7 @@ from sqlalchemy.exc import DBAPIError
 from app.db import SessionLocal
 from app.models import (User, Organization, OrganizationMembership, Contest, Problem,
                         ProblemVersion, TestSuite as DbTestSuite, ContestProblem, ContestParticipant,
-                        Submission, JudgeAttempt, Verdict, OutboxEvent)
+                        Submission, JudgeAttempt, Verdict, OutboxEvent, TestCase as DbTestCase)
 from app.routers.contests import leaderboard_statement
 from app.services.verdicts import record_verdict
 
@@ -113,7 +113,11 @@ def make_contest_graph(db,user,title):
     contest=Contest(organization_id=org.id,organizer_id=user.id,title=title,start_time=now-timedelta(minutes=60),end_time=now+timedelta(hours=2),status="published"); db.add(contest); db.flush()
     problem=Problem(organization_id=org.id,title=title); db.add(problem); db.flush()
     version=ProblemVersion(problem_id=problem.id,version_number=1,statement="s",execution_limits={},runtime_configuration={},published_at=now); db.add(version); db.flush()
-    suite=DbTestSuite(problem_version_id=version.id,version_number=1,status="active"); db.add(suite); db.flush()
+    suite=DbTestSuite(problem_version_id=version.id,version_number=1,status="draft"); db.add(suite); db.flush()
+    db.add_all([
+        DbTestCase(test_suite_id=suite.id,identifier="public",input_data="1\n",expected_output="1\n",is_hidden=False,points=50),
+        DbTestCase(test_suite_id=suite.id,identifier="hidden",input_data="2\n",expected_output="2\n",is_hidden=True,points=50),
+    ]); db.flush(); suite.status="active"; db.flush()
     pin=ContestProblem(contest_id=contest.id,organization_id=org.id,problem_id=problem.id,problem_version_id=version.id,test_suite_id=suite.id,display_order=1,points=100); db.add(pin); db.flush()
     return contest,pin,now
 
@@ -151,10 +155,17 @@ def test_submission_window_registration_and_private_submission_access(client):
     assert client.get(f"/api/v1/submissions/{submission.json()['id']}/result",headers=user_b_headers).status_code==404
     with SessionLocal() as db:
         attempt_id=db.scalar(select(JudgeAttempt.id).where(JudgeAttempt.submission_id==submission.json()["id"]))
+        case_ids=list(db.scalars(select(DbTestCase.id).where(DbTestCase.test_suite_id==db.scalar(select(Submission.test_suite_id).where(Submission.id==submission.json()["id"]))).order_by(DbTestCase.id)))
     with SessionLocal() as db:
-        record_verdict(db,attempt_id,"ACCEPTED",score=100,private_diagnostics="PRIVATE_RESULT_SECRET")
+        record_verdict(db,attempt_id,"ACCEPTED",score=100,private_diagnostics="PRIVATE_RESULT_SECRET",case_results=[
+            {"test_case_id":case_ids[0],"ordinal":1,"verdict":"ACCEPTED","execution_time_ms":2},
+            {"test_case_id":case_ids[1],"ordinal":2,"verdict":"ACCEPTED","execution_time_ms":3},
+        ])
     completed_result=client.get(f"/api/v1/submissions/{submission.json()['id']}/result",headers=user_a_headers)
     assert completed_result.json()["result"]["verdict"]=="ACCEPTED"
+    assert completed_result.json()["cases"]==[{"case_number":1,"verdict":"ACCEPTED","execution_time_ms":2}]
+    organizer_result=client.get(f"/api/v1/submissions/{submission.json()['id']}/result",headers=organizer_headers)
+    assert [case["case_number"] for case in organizer_result.json()["cases"]]==[1,2]
     assert "PRIVATE_RESULT_SECRET" not in completed_result.text
     assert client.get(f"/api/v1/submissions/{submission.json()['id']}",headers=user_b_headers).status_code==404
     assert client.get(f"/api/v1/contests/{contest_id}/submissions",headers=user_a_headers).json()["items"][0]["id"]==submission.json()["id"]

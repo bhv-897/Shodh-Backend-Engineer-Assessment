@@ -126,6 +126,7 @@ def process_one(runner=None, event_id: int | None = None) -> bool:
     execution_time_ms = None
     public_message = "The judge could not complete this submission. Please contact the contest organizer."
     diagnostics = None
+    case_results = []
     try:
         active_runner = runner or DockerPythonRunner(attempt_id=event_data["attempt_id"], lease_token=lease_token)
         if event_data["previous_lease_token"] and hasattr(active_runner, "cleanup_lease"):
@@ -134,7 +135,7 @@ def process_one(runner=None, event_id: int | None = None) -> bool:
             raise RuntimeError("Judge attempt exceeded the bounded recovery retry limit")
         if not event_data["cases"]:
             raise RuntimeError("Pinned test suite has no test cases")
-        verdict, score, execution_time_ms, public_message, diagnostics = judge_submission(
+        verdict, score, execution_time_ms, public_message, diagnostics, case_results = judge_submission(
             active_runner,
             event_data["source_code"],
             event_data["cases"],
@@ -153,6 +154,7 @@ def process_one(runner=None, event_id: int | None = None) -> bool:
             public_message=public_message,
             private_diagnostics=diagnostics,
             lease_token=lease_token,
+            case_results=case_results,
         )
         with db.begin():
             event = db.scalar(select(OutboxEvent).where(OutboxEvent.id == event_data["event_id"]).with_for_update())

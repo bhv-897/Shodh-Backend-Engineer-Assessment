@@ -208,19 +208,28 @@ class DockerPythonRunner:
         return CaseResult("ACCEPTED", output.decode("utf-8", "replace"), decoded_diagnostics, elapsed)
 
 
-def judge_submission(runner: DockerPythonRunner, source_code: str, cases: list[dict], timeout_seconds: float) -> tuple[str, int, int, str, str]:
+def judge_submission(runner: DockerPythonRunner, source_code: str, cases: list[dict], timeout_seconds: float) -> tuple[str, int, int, str, str, list[dict]]:
     total_ms = 0
-    for case in cases:
+    case_results = []
+    for ordinal, case in enumerate(cases, start=1):
         result = runner.run_case(source_code, case["input_data"], timeout_seconds)
         total_ms += result.execution_time_ms
+        case_verdict = result.verdict
+        if case_verdict == "ACCEPTED" and result.stdout.strip() != case["expected_output"].strip():
+            case_verdict = "WRONG_ANSWER"
+        case_results.append({
+            "test_case_id": case["id"],
+            "ordinal": ordinal,
+            "verdict": case_verdict,
+            "execution_time_ms": result.execution_time_ms,
+        })
         diagnostic = (
             f"case_id={case['id']} hidden={bool(case['is_hidden'])}\n"
             f"input={case['input_data']!r}\nexpected={case['expected_output']!r}\n"
             f"actual={result.stdout!r}\nstderr={result.stderr!r}"
         )
         diagnostic = diagnostic.encode("utf-8")[:60 * 1024].decode("utf-8", "ignore")
-        if result.verdict != "ACCEPTED":
-            return result.verdict, 0, total_ms, "The program did not pass all tests.", diagnostic
-        if result.stdout.strip() != case["expected_output"].strip():
-            return "WRONG_ANSWER", 0, total_ms, "The answer is incorrect.", diagnostic
-    return "ACCEPTED", 100, total_ms, "Accepted.", None
+        if case_verdict != "ACCEPTED":
+            message = "The answer is incorrect." if case_verdict == "WRONG_ANSWER" else "The program did not pass all tests."
+            return case_verdict, 0, total_ms, message, diagnostic, case_results
+    return "ACCEPTED", 100, total_ms, "Accepted.", None, case_results

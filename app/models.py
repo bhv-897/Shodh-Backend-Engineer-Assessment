@@ -158,4 +158,15 @@ class OutboxEvent(Base):
     created_at: Mapped[datetime]=mapped_column(DateTime(6), server_default=func.utc_timestamp(6), nullable=False)
     published_at: Mapped[datetime|None]=mapped_column(DateTime(6))
 
+class JudgeCaseResult(Base):
+    __tablename__="judge_case_results"
+    __table_args__=(UniqueConstraint("judge_attempt_id","ordinal"),CheckConstraint("ordinal > 0"),CheckConstraint("verdict IN ('ACCEPTED','WRONG_ANSWER','COMPILATION_ERROR','TIME_LIMIT_EXCEEDED','RUNTIME_ERROR','JUDGE_INFRA_FAILURE')"))
+    id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    judge_attempt_id: Mapped[int]=mapped_column(ForeignKey("judge_attempts.id"), nullable=False)
+    test_case_id: Mapped[int]=mapped_column(ForeignKey("test_cases.id"), nullable=False)
+    ordinal: Mapped[int]=mapped_column(Integer, nullable=False)
+    verdict: Mapped[str]=mapped_column(String(32), nullable=False)
+    execution_time_ms: Mapped[int|None]=mapped_column(Integer)
+    created_at: Mapped[datetime]=mapped_column(DateTime(6), server_default=func.utc_timestamp(6), nullable=False)
+
 # Added after judge_attempts exists in migration 0001 (intentional circular reference).

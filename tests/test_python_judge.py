@@ -11,7 +11,7 @@ from app.db import SessionLocal
 from app.judge_runner import CaseResult, DockerPythonRunner
 from app.models import (
     Contest, ContestParticipant, ContestProblem, JudgeAttempt, Organization,
-    OrganizationMembership, OutboxEvent, Problem, ProblemVersion, Submission,
+    JudgeCaseResult, OrganizationMembership, OutboxEvent, Problem, ProblemVersion, Submission,
     TestCase as DbTestCase, TestSuite as DbTestSuite, User, Verdict,
 )
 from app.worker import MAX_RETRIES, process_one
@@ -76,6 +76,7 @@ def test_worker_runs_python_program_types_in_docker(source, expected, expected_v
     with SessionLocal() as db:
         verdict = db.scalar(select(Verdict).where(Verdict.judge_attempt_id == attempt_id))
         event = db.get(OutboxEvent, event_id)
+        case_result = db.scalar(select(JudgeCaseResult).where(JudgeCaseResult.judge_attempt_id == attempt_id))
         actual_verdict = verdict.verdict if verdict else None
         private_diagnostics = verdict.private_diagnostics if verdict else None
         assert actual_verdict == expected_verdict, (
@@ -83,6 +84,7 @@ def test_worker_runs_python_program_types_in_docker(source, expected, expected_v
             f"private_diagnostics={private_diagnostics!r}"
         )
         assert event.status == "published"
+        assert case_result.verdict == expected_verdict
         if expected_verdict in {"WRONG_ANSWER", "RUNTIME_ERROR", "TIME_LIMIT_EXCEEDED", "COMPILATION_ERROR"}:
             assert "PRIVATE_INPUT" in verdict.private_diagnostics
             assert "PRIVATE_EXPECTED" not in (verdict.public_message or "")
