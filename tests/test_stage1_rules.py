@@ -9,7 +9,7 @@ from sqlalchemy.exc import DBAPIError
 from app.db import SessionLocal
 from app.models import (User, Organization, OrganizationMembership, Contest, Problem,
                         ProblemVersion, TestSuite as DbTestSuite, ContestProblem, ContestParticipant,
-                        Submission, JudgeAttempt)
+                        Submission, JudgeAttempt, Verdict)
 from app.routers.contests import leaderboard_statement
 from app.services.verdicts import record_verdict
 
