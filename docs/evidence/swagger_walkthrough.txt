@@ -1,0 +1,235 @@
+=== Register owner ===
+status: 201 Created
+body:
+{
+  "id": 49,
+  "email": "swagger-walkthrough-240a2c54814c4266aa65f7ad4fbb1251@example.test",
+  "name": "Swagger Walkthrough Owner",
+  "created_at": "2026-11-18T11:26:35.599539"
+}
+
+=== Login owner ===
+status: 200 OK
+body:
+{
+  "access_token": "[REDACTED]",
+  "token_type": "bearer"
+}
+
+=== Create organization ===
+status: 201 Created
+body:
+{
+  "name": "Swagger Walkthrough f27647f4",
+  "created_at": "2026-11-18T11:26:36.035325",
+  "id": 22
+}
+
+=== Create problem ===
+status: 201 Created
+body:
+{
+  "created_at": "2026-11-18T11:26:36.183903",
+  "id": 17,
+  "organization_id": 22,
+  "title": "Walkthrough: Add Two Numbers"
+}
+
+=== Create problem version ===
+status: 201 Created
+body:
+{
+  "execution_limits": {
+    "time_ms": 1000,
+    "memory_mb": 128
+  },
+  "problem_id": 17,
+  "version_number": 1,
+  "published_at": null,
+  "statement": "Read two integers and print their sum.",
+  "id": 17,
+  "runtime_configuration": {
+    "python": "3.12"
+  },
+  "created_at": "2026-11-18T11:26:36.313477"
+}
+
+=== Publish problem version ===
+status: 200 OK
+body:
+{
+  "execution_limits": {
+    "time_ms": 1000,
+    "memory_mb": 128
+  },
+  "problem_id": 17,
+  "version_number": 1,
+  "published_at": "2026-11-18T11:26:36.377103",
+  "statement": "Read two integers and print their sum.",
+  "id": 17,
+  "runtime_configuration": {
+    "python": "3.12"
+  },
+  "created_at": "2026-11-18T11:26:36.313477"
+}
+
+=== Create test suite ===
+status: 201 Created
+body:
+{
+  "created_at": "2026-11-18T11:26:36.484240",
+  "problem_version_id": 17,
+  "version_number": 1,
+  "status": "draft",
+  "id": 17
+}
+
+=== Create test case ===
+status: 201 Created
+body:
+{
+  "id": 8,
+  "input_data": "2 3\n",
+  "expected_output": "5\n",
+  "points": 100,
+  "test_suite_id": 17,
+  "identifier": "sample-1",
+  "is_hidden": false
+}
+
+=== Activate test suite ===
+status: 200 OK
+body:
+{
+  "created_at": "2026-11-18T11:26:36.484240",
+  "problem_version_id": 17,
+  "version_number": 1,
+  "status": "active",
+  "id": 17
+}
+
+=== Create contest ===
+status: 201 Created
+body:
+{
+  "title": "Swagger Walkthrough Contest",
+  "id": 19,
+  "end_time": "2026-11-18T13:26:33.767554",
+  "scoring_mode": "icpc",
+  "created_at": "2026-11-18T11:26:36.803727",
+  "start_time": "2026-11-18T11:21:33.767554",
+  "organization_id": 22,
+  "organizer_id": 49,
+  "status": "draft",
+  "penalty_minutes_per_wrong": 20
+}
+
+=== Add contest problem ===
+status: 201 Created
+body:
+{
+  "problem_version_id": 17,
+  "contest_id": 19,
+  "organization_id": 22,
+  "display_order": 1,
+  "problem_id": 17,
+  "id": 14,
+  "test_suite_id": 17,
+  "points": 100
+}
+
+=== Publish contest ===
+status: 200 OK
+body:
+{
+  "title": "Swagger Walkthrough Contest",
+  "id": 19,
+  "end_time": "2026-11-18T13:26:33.767554",
+  "scoring_mode": "icpc",
+  "created_at": "2026-11-18T11:26:36.803727",
+  "start_time": "2026-11-18T11:21:33.767554",
+  "organization_id": 22,
+  "organizer_id": 49,
+  "status": "published",
+  "penalty_minutes_per_wrong": 20
+}
+
+=== Register participant ===
+status: 201 Created
+body:
+{
+  "id": 19,
+  "status": "registered",
+  "user_id": 49,
+  "contest_id": 19,
+  "registered_at": "2026-11-18T11:26:37.083134"
+}
+
+=== Submit Python solution ===
+status: 201 Created
+body:
+{
+  "contest_problem_id": 14,
+  "id": 17,
+  "test_suite_id": 17,
+  "language": "python",
+  "status": "queued",
+  "submitted_at": "2026-11-18T11:26:37.174783",
+  "contest_participant_id": 19,
+  "contest_id": 19,
+  "problem_version_id": 17,
+  "source_code": "a, b = map(int, input().split())\nprint(a + b)\n",
+  "runtime_config_snapshot": {
+    "python": "3.12"
+  },
+  "authoritative_attempt_id": null
+}
+
+=== Fetch submission attempts ===
+status: 200 OK
+body:
+{
+  "items": [
+    {
+      "id": 26,
+      "attempt_number": 1,
+      "reason": "initial",
+      "status": "queued",
+      "created_at": "2026-11-18T11:26:37.191625",
+      "completed_at": null
+    }
+  ],
+  "next_cursor": null
+}
+
+=== Record development verdict ===
+status: 200 OK
+body:
+{
+  "judge_attempt_id": 26,
+  "verdict": "ACCEPTED",
+  "score": 100,
+  "execution_time_ms": 1,
+  "memory_used_kb": 1024,
+  "public_message": "Accepted",
+  "private_diagnostics": "Walkthrough test verdict",
+  "id": 17
+}
+
+=== Fetch leaderboard ===
+status: 200 OK
+body:
+{
+  "items": [
+    {
+      "participant_id": 19,
+      "user_id": 49,
+      "solved": 1,
+      "penalty": 5,
+      "last_solved_at": "2026-11-18T11:26:37.174783"
+    }
+  ],
+  "next_cursor": null
+}
+
+Walkthrough completed successfully.
