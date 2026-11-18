@@ -2,13 +2,13 @@ from datetime import datetime, timezone
 import hashlib, json
 from fastapi import APIRouter, Depends, HTTPException, Response, Query, Header
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.auth import get_current_user
 from app.config import settings
 from app.models import User, Contest, ContestParticipant, ContestProblem, ProblemVersion, Submission, JudgeAttempt, Verdict, OutboxEvent, JudgeCaseResult, TestCase, IdempotencyRecord
-from app.schemas import SubmissionCreate, VerdictCreate
+from app.schemas import SubmissionCreate, RejudgeCreate, VerdictCreate
 from app.permissions import get_role, page
 from app.services.verdicts import record_verdict
 
@@ -81,6 +81,34 @@ def submit(cid:int,cpid:int,b:SubmissionCreate,response:Response,idempotency_key
                 return replay
         raise
     db.refresh(s); return s
+
+@router.post("/submissions/{sid}/rejudge",status_code=202)
+def rejudge(sid:int,b:RejudgeCreate|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    s=db.execute(select(Submission).where(Submission.id==sid).with_for_update()).scalar_one_or_none()
+    if not s: raise HTTPException(404,"NOT_FOUND")
+    contest=db.get(Contest,s.contest_id)
+    role=get_role(db,u.id,contest.organization_id)
+    if role is None: raise HTTPException(404,"NOT_FOUND")
+    if role not in {"owner","organizer"}: raise HTTPException(403,"FORBIDDEN")
+    if b:
+        if b.problem_version_id is not None and b.problem_version_id!=s.problem_version_id: raise HTTPException(409,"PIN_MISMATCH")
+        if b.test_suite_id is not None and b.test_suite_id!=s.test_suite_id: raise HTTPException(409,"PIN_MISMATCH")
+    active=db.scalar(select(JudgeAttempt.id).where(
+        JudgeAttempt.submission_id==sid,JudgeAttempt.status.in_(("queued","running"))
+    ).with_for_update())
+    if active is not None: raise HTTPException(409,"ATTEMPT_IN_PROGRESS")
+    attempt_number=db.scalar(select(func.coalesce(func.max(JudgeAttempt.attempt_number),0)).where(JudgeAttempt.submission_id==sid))+1
+    attempt=JudgeAttempt(
+        submission_id=sid,attempt_number=attempt_number,reason="rejudge",
+        requested_by_user_id=u.id,status="queued",
+    )
+    db.add(attempt)
+    db.flush()
+    db.add(OutboxEvent(judge_attempt_id=attempt.id,event_type="judge.requested",status="pending"))
+    db.commit()
+    db.refresh(attempt)
+    return attempt
+
 @router.get("/contests/{cid}/submissions")
 def contest_submissions(cid:int,limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     c=db.get(Contest,cid)

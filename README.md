@@ -45,4 +45,4 @@ The API hides submissions across organization and participant boundaries:
 
 ## Known limits
 
-Rejudge, leaderboard load tests and Stage 2 execution on a hardened multi-tenant sandbox are not implemented. Abandoned worker leases are retried at most three times; after that the attempt is completed as `JUDGE_INFRA_FAILURE`. Retry recovery depends on the worker sharing the same Docker daemon so it can clean up containers from the expired lease.
+Leaderboard load tests and Stage 2 execution on a hardened multi-tenant sandbox are not implemented. Rejudge creates a new queued attempt and outbox event; it refuses a submission with an active attempt. Abandoned worker leases are retried at most three times; after that the attempt is completed as `JUDGE_INFRA_FAILURE`. Retry recovery depends on the worker sharing the same Docker daemon so it can clean up containers from the expired lease.

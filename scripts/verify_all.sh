@@ -3,7 +3,7 @@ set -euo pipefail
 
 overall_status=0
 passed_steps=0
-total_steps=8
+total_steps=11
 step_exit_code=0
 worker_stopped=0
 api_dev_enabled=0
@@ -63,12 +63,17 @@ if (( step_exit_code == 0 )); then worker_stopped=1; fi
 
 run_step "API tests" docker compose exec api python -m pytest -q
 
+run_step "Rejudge tests" docker compose exec api python -m pytest -q tests/test_rejudge.py
+
 # Run the complete worker file with the service poller stopped so its race test
 # is exercised only by the two worker processes started by that test.
 run_step "Worker Docker tests" docker compose run --rm --no-deps worker python -m pytest -q tests/test_python_judge.py
 
 run_step "Restart worker service" docker compose start worker
 if (( step_exit_code == 0 )); then worker_stopped=0; fi
+
+run_step "Seed standings check contest" docker compose exec api python -m scripts.seed_dev
+run_step "Rebuild standings check" docker compose exec api python -m scripts.rebuild_standings
 
 run_step "Enable dev endpoint for walkthrough" env ENABLE_DEV_ENDPOINTS=true docker compose up -d --force-recreate api
 if (( step_exit_code == 0 )); then api_dev_enabled=1; fi

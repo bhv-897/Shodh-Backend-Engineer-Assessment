@@ -15,4 +15,5 @@ class ContestCreate(Input): title:str; start_time:datetime; end_time:datetime; s
 class ContestUpdate(Input): title:str|None=None; start_time:datetime|None=None; end_time:datetime|None=None; scoring_mode:str|None=None; penalty_minutes_per_wrong:int|None=None
 class ContestProblemCreate(Input): problem_id:int; problem_version_id:int; test_suite_id:int; display_order:int; points:int=Field(ge=0)
 class SubmissionCreate(Input): source_code:str; language:str
+class RejudgeCreate(Input): problem_version_id:int|None=None; test_suite_id:int|None=None
 class VerdictCreate(Input): verdict:str; score:int=0; execution_time_ms:int|None=None; memory_used_kb:int|None=None; public_message:str|None=None; private_diagnostics:str|None=None
