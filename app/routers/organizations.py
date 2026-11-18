@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.auth import get_current_user
 from app.models import User, Organization, OrganizationMembership, Contest
-from app.permissions import require_org, get_role
+from app.permissions import require_org, get_role, page
 from app.schemas import OrgCreate, MemberAdd, RoleUpdate
 
 router=APIRouter(tags=["organizations"])
@@ -12,8 +12,8 @@ router=APIRouter(tags=["organizations"])
 def create_org(b:OrgCreate,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     o=Organization(name=b.name); db.add(o); db.flush(); db.add(OrganizationMembership(organization_id=o.id,user_id=u.id,role="owner")); db.commit(); db.refresh(o); return o
 @router.get("/organizations")
-def list_orgs(u:User=Depends(get_current_user),db:Session=Depends(get_db)):
-    return {"items":db.scalars(select(Organization).join(OrganizationMembership).where(OrganizationMembership.user_id==u.id).order_by(Organization.id).limit(101)).all(),"next_cursor":None}
+def list_orgs(limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    return page(db,select(Organization).join(OrganizationMembership).where(OrganizationMembership.user_id==u.id),Organization.id,Organization.id,limit,cursor)
 @router.get("/organizations/{oid}")
 def get_org(oid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     require_org(db,u.id,oid); o=db.get(Organization,oid)
@@ -28,9 +28,8 @@ def add_member(oid:int,b:MemberAdd,u:User=Depends(get_current_user),db:Session=D
     if get_role(db,target.id,oid): raise HTTPException(409,"ALREADY_MEMBER")
     m=OrganizationMembership(organization_id=oid,user_id=target.id,role=b.role); db.add(m); db.commit(); db.refresh(m); return m
 @router.get("/organizations/{oid}/members")
-def members(oid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_org(db,u.id,oid); ms=db.scalars(select(OrganizationMembership).where(OrganizationMembership.organization_id==oid).order_by(OrganizationMembership.id).limit(101)).all()
-    return {"items":ms,"next_cursor":None}
+def members(oid:int,limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_org(db,u.id,oid); return page(db,select(OrganizationMembership).where(OrganizationMembership.organization_id==oid),OrganizationMembership.id,OrganizationMembership.id,limit,cursor)
 def protect_membership_change(db,oid,uid,new_role=None):
     old=get_role(db,uid,oid)
     if not old: raise HTTPException(404,"NOT_FOUND")

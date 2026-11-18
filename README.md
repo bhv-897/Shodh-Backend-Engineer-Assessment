@@ -10,6 +10,10 @@ FastAPI / SQLAlchemy 2.0 API for contest setup, registration and submission capt
 4. Seed Swagger users (optional): `python -m scripts.seed_dev`.
 5. Start: `uvicorn app.main:app --reload`; Swagger is at `/docs`.
 
+Or start MySQL 8 and the API together with `docker compose up --build`; the API waits for MySQL, applies Alembic migrations, then starts on `http://localhost:8000`.
+
+Populate the Swagger demo accounts and fixtures with `docker compose exec api python -m scripts.seed_dev`. Run the MySQL integration suite with `docker compose exec api python -m pytest -q`.
+
 Seed password for all four demo accounts: `EasecodingDemo!2026`. Enable the internal verdict endpoint with `ENABLE_DEV_ENDPOINTS=true`.
 
 ## Stage 1 boundaries

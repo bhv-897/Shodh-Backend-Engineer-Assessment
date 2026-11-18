@@ -11,6 +11,11 @@ def record_verdict(db:Session,attempt_id:int,verdict:str,score:int=0,execution_t
         a.status="completed"; a.completed_at=datetime.now(timezone.utc).replace(tzinfo=None)
         s=db.execute(select(Submission).where(Submission.id==a.submission_id).with_for_update()).scalar_one()
         current=db.get(JudgeAttempt,s.authoritative_attempt_id) if s.authoritative_attempt_id else None
-        if current is None or a.attempt_number>current.attempt_number:
-            db.execute(update(Submission).where(Submission.id==s.id).values(authoritative_attempt_id=a.id,status="completed" if verdict!="JUDGE_INFRA_FAILURE" else ("failed" if current is None else "completed")))
+        if verdict == "JUDGE_INFRA_FAILURE":
+            # Infra failures are never authoritative: a later failed infrastructure
+            # attempt must not erase an earlier accepted result.
+            if current is None:
+                db.execute(update(Submission).where(Submission.id==s.id,Submission.authoritative_attempt_id.is_(None)).values(status="failed"))
+        elif current is None or a.attempt_number>current.attempt_number:
+            db.execute(update(Submission).where(Submission.id==s.id).values(authoritative_attempt_id=a.id,status="completed"))
     return v

@@ -1,6 +1,7 @@
 from datetime import datetime
-from sqlalchemy import (String, Text, Integer, BigInteger, Boolean, DateTime, ForeignKey, ForeignKeyConstraint, UniqueConstraint, CheckConstraint, JSON, func)
+from sqlalchemy import (String, Text, Integer, BigInteger, Boolean, DateTime, ForeignKey, ForeignKeyConstraint, UniqueConstraint, CheckConstraint, JSON, Index, func)
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from app.db import Base
 
 class User(Base):
@@ -19,7 +20,7 @@ class Organization(Base):
 
 class OrganizationMembership(Base):
     __tablename__="organization_memberships"
-    __table_args__=(UniqueConstraint("organization_id","user_id"), CheckConstraint("role IN ('owner','organizer','member')"))
+    __table_args__=(UniqueConstraint("organization_id","user_id"), CheckConstraint("role IN ('owner','organizer','member')"),Index("ix_memberships_user_org","user_id","organization_id"),Index("ix_memberships_org_id","organization_id","id"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
     organization_id: Mapped[int]=mapped_column(ForeignKey("organizations.id"), nullable=False)
     user_id: Mapped[int]=mapped_column(ForeignKey("users.id"), nullable=False)
@@ -28,7 +29,7 @@ class OrganizationMembership(Base):
 
 class Problem(Base):
     __tablename__="problems"
-    __table_args__=(UniqueConstraint("id","organization_id"),)
+    __table_args__=(UniqueConstraint("id","organization_id"),Index("ix_problems_org_id","organization_id","id"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
     organization_id: Mapped[int]=mapped_column(ForeignKey("organizations.id"), nullable=False)
     title: Mapped[str]=mapped_column(String(255), nullable=False)
@@ -36,7 +37,7 @@ class Problem(Base):
 
 class ProblemVersion(Base):
     __tablename__="problem_versions"
-    __table_args__=(UniqueConstraint("problem_id","version_number"),UniqueConstraint("id","problem_id"))
+    __table_args__=(UniqueConstraint("problem_id","version_number"),UniqueConstraint("id","problem_id"),Index("ix_problem_versions_problem_published","problem_id","published_at","version_number"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
     problem_id: Mapped[int]=mapped_column(ForeignKey("problems.id"), nullable=False)
     version_number: Mapped[int]=mapped_column(Integer, nullable=False)
@@ -48,7 +49,7 @@ class ProblemVersion(Base):
 
 class TestSuite(Base):
     __tablename__="test_suites"
-    __table_args__=(UniqueConstraint("problem_version_id","version_number"),UniqueConstraint("id","problem_version_id"),CheckConstraint("status IN ('draft','active','retired')"))
+    __table_args__=(UniqueConstraint("problem_version_id","version_number"),UniqueConstraint("id","problem_version_id"),CheckConstraint("status IN ('draft','active','retired')"),Index("ix_test_suites_version_status","problem_version_id","status","version_number"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
     problem_version_id: Mapped[int]=mapped_column(ForeignKey("problem_versions.id"), nullable=False)
     version_number: Mapped[int]=mapped_column(Integer, nullable=False)
@@ -57,7 +58,7 @@ class TestSuite(Base):
 
 class TestCase(Base):
     __tablename__="test_cases"
-    __table_args__=(UniqueConstraint("test_suite_id","identifier"),CheckConstraint("points >= 0"))
+    __table_args__=(UniqueConstraint("test_suite_id","identifier"),CheckConstraint("points >= 0"),Index("ix_test_cases_suite_id","test_suite_id","id"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
     test_suite_id: Mapped[int]=mapped_column(ForeignKey("test_suites.id"), nullable=False)
     identifier: Mapped[str]=mapped_column(String(100), nullable=False)
@@ -68,7 +69,7 @@ class TestCase(Base):
 
 class Contest(Base):
     __tablename__="contests"
-    __table_args__=(UniqueConstraint("id","organization_id"),ForeignKeyConstraint(["organization_id","organizer_id"],["organization_memberships.organization_id","organization_memberships.user_id"]),CheckConstraint("end_time > start_time"))
+    __table_args__=(UniqueConstraint("id","organization_id"),ForeignKeyConstraint(["organization_id","organizer_id"],["organization_memberships.organization_id","organization_memberships.user_id"]),CheckConstraint("end_time > start_time"),Index("ix_contests_org_status_id","organization_id","status","id"),Index("ix_contests_status_start_id","status","start_time","id"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
     organization_id: Mapped[int]=mapped_column(ForeignKey("organizations.id"), nullable=False)
     organizer_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
@@ -82,7 +83,7 @@ class Contest(Base):
 
 class ContestParticipant(Base):
     __tablename__="contest_participants"
-    __table_args__=(UniqueConstraint("contest_id","user_id"),UniqueConstraint("id","contest_id"),CheckConstraint("status IN ('registered','withdrawn','disqualified')"))
+    __table_args__=(UniqueConstraint("contest_id","user_id"),UniqueConstraint("id","contest_id"),CheckConstraint("status IN ('registered','withdrawn','disqualified')"),Index("ix_participants_contest_status_registered","contest_id","status","registered_at","id"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
     contest_id: Mapped[int]=mapped_column(ForeignKey("contests.id"), nullable=False)
     user_id: Mapped[int]=mapped_column(ForeignKey("users.id"), nullable=False)
@@ -91,9 +92,9 @@ class ContestParticipant(Base):
 
 class ContestProblem(Base):
     __tablename__="contest_problems"
-    __table_args__=(UniqueConstraint("contest_id","problem_id"),UniqueConstraint("contest_id","display_order"),UniqueConstraint("id","contest_id","problem_version_id","test_suite_id"),ForeignKeyConstraint(["problem_id","organization_id"],["problems.id","problems.organization_id"]),ForeignKeyConstraint(["problem_version_id","problem_id"],["problem_versions.id","problem_versions.problem_id"]),ForeignKeyConstraint(["test_suite_id","problem_version_id"],["test_suites.id","test_suites.problem_version_id"]))
+    __table_args__=(UniqueConstraint("contest_id","problem_id"),UniqueConstraint("contest_id","display_order"),UniqueConstraint("id","contest_id","problem_version_id","test_suite_id"),ForeignKeyConstraint(["contest_id","organization_id"],["contests.id","contests.organization_id"]),ForeignKeyConstraint(["problem_id","organization_id"],["problems.id","problems.organization_id"]),ForeignKeyConstraint(["problem_version_id","problem_id"],["problem_versions.id","problem_versions.problem_id"]),ForeignKeyConstraint(["test_suite_id","problem_version_id"],["test_suites.id","test_suites.problem_version_id"]),Index("ix_contest_problems_contest_order","contest_id","display_order","id"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    contest_id: Mapped[int]=mapped_column(ForeignKey("contests.id"), nullable=False)
+    contest_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
     organization_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
     problem_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
     problem_version_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
@@ -103,14 +104,14 @@ class ContestProblem(Base):
 
 class Submission(Base):
     __tablename__="submissions"
-    __table_args__=(ForeignKeyConstraint(["contest_participant_id","contest_id"],["contest_participants.id","contest_participants.contest_id"]),ForeignKeyConstraint(["contest_problem_id","contest_id","problem_version_id","test_suite_id"],["contest_problems.id","contest_problems.contest_id","contest_problems.problem_version_id","contest_problems.test_suite_id"]),UniqueConstraint("id","contest_id"))
+    __table_args__=(ForeignKeyConstraint(["contest_participant_id","contest_id"],["contest_participants.id","contest_participants.contest_id"]),ForeignKeyConstraint(["contest_problem_id","contest_id","problem_version_id","test_suite_id"],["contest_problems.id","contest_problems.contest_id","contest_problems.problem_version_id","contest_problems.test_suite_id"]),UniqueConstraint("id","contest_id"),Index("ix_submissions_contest_submitted_id","contest_id","submitted_at","id"),Index("ix_submissions_participant_problem_submitted","contest_participant_id","contest_problem_id","submitted_at","id"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
     contest_participant_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
     contest_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
     contest_problem_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
     problem_version_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
     test_suite_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
-    source_code: Mapped[str]=mapped_column(Text, nullable=False)
+    source_code: Mapped[str]=mapped_column(MEDIUMTEXT, nullable=False)
     language: Mapped[str]=mapped_column(String(32), nullable=False)
     runtime_config_snapshot: Mapped[dict]=mapped_column(JSON, nullable=False)
     status: Mapped[str]=mapped_column(String(20), nullable=False, server_default="queued")
@@ -136,7 +137,7 @@ class JudgeAttempt(Base):
 
 class Verdict(Base):
     __tablename__="verdicts"
-    __table_args__=(UniqueConstraint("judge_attempt_id"),CheckConstraint("verdict IN ('ACCEPTED','WRONG_ANSWER','TIME_LIMIT_EXCEEDED','MEMORY_LIMIT_EXCEEDED','RUNTIME_ERROR','JUDGE_INFRA_FAILURE')"),CheckConstraint("score >= 0"))
+    __table_args__=(UniqueConstraint("judge_attempt_id"),CheckConstraint("verdict IN ('ACCEPTED','WRONG_ANSWER','COMPILATION_ERROR','TIME_LIMIT_EXCEEDED','MEMORY_LIMIT_EXCEEDED','RUNTIME_ERROR','JUDGE_INFRA_FAILURE')"),CheckConstraint("score >= 0"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
     judge_attempt_id: Mapped[int]=mapped_column(ForeignKey("judge_attempts.id"), nullable=False)
     verdict: Mapped[str]=mapped_column(String(32), nullable=False)

@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import select, func, and_, case
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
+from sqlalchemy import select, func, and_, case, literal_column
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.auth import get_current_user
 from app.models import User, Contest, Organization, OrganizationMembership, ContestProblem, Problem, ProblemVersion, TestSuite, ContestParticipant, Submission, JudgeAttempt, Verdict
-from app.permissions import require_org
+from app.permissions import require_org, page
 from app.schemas import ContestCreate, ContestUpdate, ContestProblemCreate
 
 router=APIRouter(tags=["contests"])
@@ -22,14 +22,14 @@ def create_contest(oid:int,b:ContestCreate,u:User=Depends(get_current_user),db:S
     if end<=start: raise HTTPException(422,"VALIDATION_ERROR")
     c=Contest(organization_id=oid,organizer_id=u.id,title=b.title,start_time=start,end_time=end,scoring_mode=b.scoring_mode,penalty_minutes_per_wrong=b.penalty_minutes_per_wrong); db.add(c); db.commit(); db.refresh(c); return c
 @router.get("/organizations/{oid}/contests")
-def org_contests(oid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_org(db,u.id,oid); rows=db.scalars(select(Contest).where(Contest.organization_id==oid).order_by(Contest.id).limit(101)).all(); return {"items":rows,"next_cursor":None}
+def org_contests(oid:int,limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_org(db,u.id,oid); return page(db,select(Contest).where(Contest.organization_id==oid),Contest.id,Contest.id,limit,cursor)
 @router.get("/contests")
-def all_contests(u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+def all_contests(limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     # Hidden drafts are excluded unless caller belongs to their organization.
     member_orgs=select(OrganizationMembership.organization_id).where(OrganizationMembership.user_id==u.id)
-    q=select(Contest).where(Contest.status.in_(["published","archived"]) | Contest.organization_id.in_(member_orgs)).order_by(Contest.id).limit(101)
-    rows=db.scalars(q).all(); return {"items":rows,"next_cursor":None}
+    q=select(Contest).where(Contest.status.in_(["published","archived"]) | Contest.organization_id.in_(member_orgs))
+    return page(db,q,Contest.id,Contest.id,limit,cursor)
 @router.get("/contests/{cid}")
 def get_contest(cid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     c=contest(db,cid)
@@ -70,19 +70,23 @@ def add_problem(cid:int,b:ContestProblemCreate,u:User=Depends(get_current_user),
     if c.status!="draft" and not(c.status=="published" and c.end_time>=now_utc()): raise HTTPException(409,"CONTEST_NOT_EDITABLE")
     cp=ContestProblem(contest_id=cid,organization_id=c.organization_id,**b.model_dump()); db.add(cp); db.commit(); db.refresh(cp); return cp
 @router.get("/contests/{cid}/problems")
-def contest_problems(cid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+def contest_problems(cid:int,limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     c=contest(db,cid); role=None
     from app.permissions import get_role
     role=get_role(db,u.id,c.organization_id)
-    rows=db.scalars(select(ContestProblem).where(ContestProblem.contest_id==cid).order_by(ContestProblem.display_order,ContestProblem.id).limit(101)).all()
-    if not role: return {"items":[{"id":r.id,"contest_id":r.contest_id,"problem_id":r.problem_id,"display_order":r.display_order,"points":r.points} for r in rows],"next_cursor":None}
-    return {"items":rows,"next_cursor":None}
+    if c.status=="draft" and role is None: raise HTTPException(404,"NOT_FOUND")
+    result=page(db,select(ContestProblem).where(ContestProblem.contest_id==cid),ContestProblem.display_order,ContestProblem.id,limit,cursor)
+    if not role: result["items"]=[{"id":r.id,"contest_id":r.contest_id,"problem_id":r.problem_id,"display_order":r.display_order,"points":r.points} for r in result["items"]]
+    return result
 @router.get("/contests/{cid}/problems/{cpid}")
 def contest_problem(cid:int,cpid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    c=contest(db,cid)
+    from app.permissions import get_role
+    role=get_role(db,u.id,c.organization_id)
+    if c.status=="draft" and role is None: raise HTTPException(404,"NOT_FOUND")
     r=db.scalar(select(ContestProblem).where(ContestProblem.id==cpid,ContestProblem.contest_id==cid))
     if not r: raise HTTPException(404,"NOT_FOUND")
-    from app.permissions import get_role
-    if not get_role(db,u.id,contest(db,cid).organization_id): return {"id":r.id,"contest_id":r.contest_id,"problem_id":r.problem_id,"display_order":r.display_order,"points":r.points}
+    if role is None: return {"id":r.id,"contest_id":r.contest_id,"problem_id":r.problem_id,"display_order":r.display_order,"points":r.points}
     return r
 @router.delete("/contests/{cid}/problems/{cpid}",status_code=204)
 def remove_problem(cid:int,cpid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
@@ -111,19 +115,20 @@ def unregister(cid:int,u:User=Depends(get_current_user),db:Session=Depends(get_d
     if not p or p.status!="registered": raise HTTPException(404,"NOT_FOUND")
     p.status="withdrawn"; db.commit(); return Response(status_code=204)
 @router.get("/contests/{cid}/participants")
-def participants(cid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
-    c=contest(db,cid); organizer(db,u,c); rows=db.scalars(select(ContestParticipant).where(ContestParticipant.contest_id==cid).order_by(ContestParticipant.registered_at,ContestParticipant.id).limit(101)).all(); return {"items":rows,"next_cursor":None}
+def participants(cid:int,limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    c=contest(db,cid); organizer(db,u,c); return page(db,select(ContestParticipant).where(ContestParticipant.contest_id==cid),ContestParticipant.registered_at,ContestParticipant.id,limit,cursor)
 @router.get("/contests/{cid}/leaderboard")
 def leaderboard(cid:int,limit:int=50,offset:int=0,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     c=contest(db,cid)
     if c.status not in {"published","archived"}: raise HTTPException(404,"NOT_FOUND")
     if not 1<=limit<=200 or offset<0: raise HTTPException(422,"VALIDATION_ERROR")
     # Single aggregate SQL statement over authoritative verdicts, ranked first solve per pin.
-    from sqlalchemy import literal
     # Rank ACCEPTED authoritative verdicts per participant/pin; the first one is the solve.
     accepted_rank=func.row_number().over(partition_by=(ContestParticipant.user_id,Submission.contest_problem_id),order_by=(Submission.submitted_at,Submission.id)).label("rn")
     accepted=select(ContestParticipant.user_id.label("uid"),Submission.contest_problem_id.label("pid"),Submission.id.label("sid"),Submission.submitted_at.label("sat"),accepted_rank).join(Submission,Submission.contest_participant_id==ContestParticipant.id).join(JudgeAttempt,JudgeAttempt.id==Submission.authoritative_attempt_id).join(Verdict,Verdict.judge_attempt_id==JudgeAttempt.id).where(ContestParticipant.contest_id==cid,ContestParticipant.status=="registered",Verdict.verdict=="ACCEPTED").subquery()
     solves=select(accepted.c.uid,accepted.c.pid,accepted.c.sid,accepted.c.sat).where(accepted.c.rn==1).subquery()
     wrong_count=select(func.count(Submission.id)).join(JudgeAttempt,JudgeAttempt.id==Submission.authoritative_attempt_id).join(Verdict,Verdict.judge_attempt_id==JudgeAttempt.id).where(Submission.contest_participant_id==ContestParticipant.id,Submission.contest_problem_id==solves.c.pid,Verdict.verdict!="ACCEPTED",Verdict.verdict!="JUDGE_INFRA_FAILURE",and_((Submission.submitted_at<solves.c.sat)|((Submission.submitted_at==solves.c.sat)&(Submission.id<solves.c.sid)))).correlate(ContestParticipant,solves).scalar_subquery()
-    q=select(ContestParticipant.user_id.label("participant_id"),func.count(solves.c.sid).label("solved"),func.coalesce(func.sum(func.timestampdiff(literal("MINUTE"),c.start_time,solves.c.sat)+func.coalesce(wrong_count,0)*c.penalty_minutes_per_wrong),0).label("penalty"),func.max(solves.c.sat).label("last_solved_at")).select_from(ContestParticipant).outerjoin(solves,solves.c.uid==ContestParticipant.user_id).where(ContestParticipant.contest_id==cid,ContestParticipant.status=="registered").group_by(ContestParticipant.user_id).order_by(func.count(solves.c.sid).desc(),"penalty",case((func.max(solves.c.sat).is_(None),1),else_=0),func.max(solves.c.sat),ContestParticipant.user_id).limit(limit).offset(offset)
+    penalty=func.coalesce(func.sum(func.timestampdiff(literal_column("MINUTE"),c.start_time,solves.c.sat)+func.coalesce(wrong_count,0)*c.penalty_minutes_per_wrong),0).label("penalty")
+    solved=func.count(solves.c.sid).label("solved")
+    q=select(ContestParticipant.id.label("participant_id"),ContestParticipant.user_id.label("user_id"),solved,penalty,func.max(solves.c.sat).label("last_solved_at")).select_from(ContestParticipant).outerjoin(solves,solves.c.uid==ContestParticipant.user_id).where(ContestParticipant.contest_id==cid,ContestParticipant.status=="registered").group_by(ContestParticipant.id,ContestParticipant.user_id).order_by(solved.desc(),penalty.asc(),case((func.max(solves.c.sat).is_(None),1),else_=0).asc(),func.max(solves.c.sat).asc(),ContestParticipant.id.asc()).limit(limit).offset(offset)
     rows=db.execute(q).mappings().all(); return {"items":[dict(r) for r in rows],"next_cursor":None}

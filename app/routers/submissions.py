@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db import get_db
@@ -7,7 +7,7 @@ from app.auth import get_current_user
 from app.config import settings
 from app.models import User, Contest, ContestParticipant, ContestProblem, ProblemVersion, Submission, JudgeAttempt, Verdict
 from app.schemas import SubmissionCreate, VerdictCreate
-from app.permissions import get_role
+from app.permissions import get_role, page
 from app.services.verdicts import record_verdict
 
 router=APIRouter(tags=["submissions"])
@@ -33,7 +33,7 @@ def submit(cid:int,cpid:int,b:SubmissionCreate,u:User=Depends(get_current_user),
     s=Submission(contest_participant_id=p.id,contest_id=cid,contest_problem_id=cp.id,problem_version_id=cp.problem_version_id,test_suite_id=cp.test_suite_id,source_code=b.source_code,language="python",runtime_config_snapshot=version.runtime_configuration)
     db.add(s); db.flush(); a=JudgeAttempt(submission_id=s.id,attempt_number=1,reason="initial",requested_by_user_id=u.id,status="queued"); db.add(a); db.commit(); db.refresh(s); return s
 @router.get("/contests/{cid}/submissions")
-def contest_submissions(cid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+def contest_submissions(cid:int,limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     c=db.get(Contest,cid)
     if not c: raise HTTPException(404,"NOT_FOUND")
     role=get_role(db,u.id,c.organization_id); q=select(Submission).where(Submission.contest_id==cid)
@@ -41,7 +41,7 @@ def contest_submissions(cid:int,u:User=Depends(get_current_user),db:Session=Depe
         p=db.scalar(select(ContestParticipant).where(ContestParticipant.contest_id==cid,ContestParticipant.user_id==u.id))
         if not p: raise HTTPException(404,"NOT_FOUND")
         q=q.where(Submission.contest_participant_id==p.id)
-    rows=db.scalars(q.order_by(Submission.submitted_at.desc(),Submission.id.desc()).limit(101)).all(); return {"items":rows,"next_cursor":None}
+    return page(db,q,Submission.submitted_at,Submission.id,limit,cursor,descending=True)
 @router.get("/submissions/{sid}")
 def submission(sid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     s=db.get(Submission,sid)
@@ -53,16 +53,16 @@ def source(sid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     if not s: raise HTTPException(404,"NOT_FOUND")
     owned_or_organizer(db,u,s); return {"source_code":s.source_code,"language":s.language}
 @router.get("/submissions/{sid}/attempts")
-def attempts(sid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+def attempts(sid:int,limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     s=db.get(Submission,sid)
     if not s: raise HTTPException(404,"NOT_FOUND")
     owned_or_organizer(db,u,s); private=get_role(db,u.id,db.get(Contest,s.contest_id).organization_id) in {"owner","organizer"}
-    rows=db.scalars(select(JudgeAttempt).where(JudgeAttempt.submission_id==sid).order_by(JudgeAttempt.attempt_number,JudgeAttempt.id)).all(); out=[]
-    for a in rows:
+    result=page(db,select(JudgeAttempt).where(JudgeAttempt.submission_id==sid),JudgeAttempt.attempt_number,JudgeAttempt.id,limit,cursor); out=[]
+    for a in result["items"]:
         v=db.scalar(select(Verdict).where(Verdict.judge_attempt_id==a.id)); row={"id":a.id,"attempt_number":a.attempt_number,"reason":a.reason,"status":a.status,"created_at":a.created_at,"completed_at":a.completed_at}
         if v: row["verdict"]={"verdict":v.verdict,"score":v.score,"execution_time_ms":v.execution_time_ms,"memory_used_kb":v.memory_used_kb,"public_message":v.public_message,**({"private_diagnostics":v.private_diagnostics} if private else {})}
         out.append(row)
-    return {"items":out,"next_cursor":None}
+    return {"items":out,"next_cursor":result["next_cursor"]}
 @router.post("/dev/attempts/{attempt_id}/verdict",include_in_schema=False)
 def dev_verdict(attempt_id:int,b:VerdictCreate,db:Session=Depends(get_db)):
     if not settings.enable_dev_endpoints: raise HTTPException(404,"NOT_FOUND")

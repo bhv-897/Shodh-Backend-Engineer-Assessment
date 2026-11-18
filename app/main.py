@@ -34,6 +34,8 @@ async def db_error_handler(request:Request,exc):
     raw=str(getattr(exc,"orig",exc)); code="CONFLICT"
     if "PUBLISHED_VERSION_IMMUTABLE" in raw: code="PUBLISHED_VERSION_IMMUTABLE"
     elif "ACTIVE_SUITE_IMMUTABLE" in raw: code="ACTIVE_SUITE_IMMUTABLE"
+    elif "LAST_OWNER_REQUIRED" in raw: code="LAST_OWNER_REQUIRED"
+    elif "MEMBER_IS_CONTEST_ORGANIZER" in raw: code="MEMBER_IS_CONTEST_ORGANIZER"
     elif "45000" in raw: code="DATABASE_RULE_VIOLATION"
     return JSONResponse(status_code=409,content=error_body(request,code,"The request conflicts with the current resource state"))
 @app.exception_handler(Exception)
