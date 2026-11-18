@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json
 from uuid import uuid4
 
 import pytest
@@ -9,6 +10,7 @@ from app.db import SessionLocal
 from app.models import (User, Organization, OrganizationMembership, Contest, Problem,
                         ProblemVersion, TestSuite as DbTestSuite, ContestProblem, ContestParticipant,
                         Submission, JudgeAttempt)
+from app.routers.contests import leaderboard_statement
 from app.services.verdicts import record_verdict
 
 PASSWORD="Strong-Test-Password-2026"
@@ -161,9 +163,21 @@ def test_leaderboard_ordering_penalty_infra_and_participant_ids(client):
         add_result(people[1],10,"ACCEPTED")
         contest.status="published"; db.commit()
         contest_id=contest.id; expected_ids=[p.id for p in people]
-    result=client.get(f"/api/v1/contests/{contest_id}/leaderboard?limit=10",headers=headers)
+    result=client.get(f"/api/v1/contests/{contest_id}/leaderboard?limit=2",headers=headers)
     assert result.status_code==200, result.text
     rows=result.json()["items"]
-    assert [row["participant_id"] for row in rows]==[expected_ids[1],expected_ids[0],expected_ids[2]]
-    assert [row["solved"] for row in rows]==[1,1,0]
+    assert [row["participant_id"] for row in rows]==[expected_ids[1],expected_ids[0]]
+    assert [row["solved"] for row in rows]==[1,1]
     assert rows[0]["penalty"] < rows[1]["penalty"]
+    cursor=result.json()["next_cursor"]
+    assert cursor
+    next_page=client.get(f"/api/v1/contests/{contest_id}/leaderboard?limit=2&cursor={cursor}",headers=headers)
+    assert next_page.status_code==200, next_page.text
+    assert [r["participant_id"] for r in next_page.json()["items"]]==[expected_ids[2]]
+    assert next_page.json()["next_cursor"] is None
+    with SessionLocal() as db:
+        contest=db.get(Contest,contest_id)
+        statement=leaderboard_statement(contest_id,contest).compile(dialect=db.get_bind().dialect,compile_kwargs={"literal_binds":True})
+        plan=db.execute(text("EXPLAIN FORMAT=JSON "+str(statement))).scalar_one()
+        if isinstance(plan,str): plan=json.loads(plan)
+        assert "query_block" in plan

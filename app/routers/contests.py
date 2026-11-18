@@ -1,6 +1,7 @@
+import base64, json
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Response, Query
-from sqlalchemy import select, func, and_, case, literal_column
+from sqlalchemy import select, func, and_, or_, case, literal_column, cast, Integer
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.auth import get_current_user
@@ -117,18 +118,45 @@ def unregister(cid:int,u:User=Depends(get_current_user),db:Session=Depends(get_d
 @router.get("/contests/{cid}/participants")
 def participants(cid:int,limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     c=contest(db,cid); organizer(db,u,c); return page(db,select(ContestParticipant).where(ContestParticipant.contest_id==cid),ContestParticipant.registered_at,ContestParticipant.id,limit,cursor)
-@router.get("/contests/{cid}/leaderboard")
-def leaderboard(cid:int,limit:int=50,offset:int=0,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
-    c=contest(db,cid)
-    if c.status not in {"published","archived"}: raise HTTPException(404,"NOT_FOUND")
-    if not 1<=limit<=200 or offset<0: raise HTTPException(422,"VALIDATION_ERROR")
-    # Single aggregate SQL statement over authoritative verdicts, ranked first solve per pin.
-    # Rank ACCEPTED authoritative verdicts per participant/pin; the first one is the solve.
+def leaderboard_statement(cid:int,c:Contest):
+    # One aggregate SQL statement over authoritative verdicts, ranked first solve per pin.
     accepted_rank=func.row_number().over(partition_by=(ContestParticipant.user_id,Submission.contest_problem_id),order_by=(Submission.submitted_at,Submission.id)).label("rn")
     accepted=select(ContestParticipant.user_id.label("uid"),Submission.contest_problem_id.label("pid"),Submission.id.label("sid"),Submission.submitted_at.label("sat"),accepted_rank).join(Submission,Submission.contest_participant_id==ContestParticipant.id).join(JudgeAttempt,JudgeAttempt.id==Submission.authoritative_attempt_id).join(Verdict,Verdict.judge_attempt_id==JudgeAttempt.id).where(ContestParticipant.contest_id==cid,ContestParticipant.status=="registered",Verdict.verdict=="ACCEPTED").subquery()
     solves=select(accepted.c.uid,accepted.c.pid,accepted.c.sid,accepted.c.sat).where(accepted.c.rn==1).subquery()
     wrong_count=select(func.count(Submission.id)).join(JudgeAttempt,JudgeAttempt.id==Submission.authoritative_attempt_id).join(Verdict,Verdict.judge_attempt_id==JudgeAttempt.id).where(Submission.contest_participant_id==ContestParticipant.id,Submission.contest_problem_id==solves.c.pid,Verdict.verdict!="ACCEPTED",Verdict.verdict!="JUDGE_INFRA_FAILURE",and_((Submission.submitted_at<solves.c.sat)|((Submission.submitted_at==solves.c.sat)&(Submission.id<solves.c.sid)))).correlate(ContestParticipant,solves).scalar_subquery()
-    penalty=func.coalesce(func.sum(func.timestampdiff(literal_column("MINUTE"),c.start_time,solves.c.sat)+func.coalesce(wrong_count,0)*c.penalty_minutes_per_wrong),0).label("penalty")
+    penalty=cast(func.coalesce(func.sum(func.timestampdiff(literal_column("MINUTE"),c.start_time,solves.c.sat)+func.coalesce(wrong_count,0)*c.penalty_minutes_per_wrong),0),Integer).label("penalty")
     solved=func.count(solves.c.sid).label("solved")
-    q=select(ContestParticipant.id.label("participant_id"),ContestParticipant.user_id.label("user_id"),solved,penalty,func.max(solves.c.sat).label("last_solved_at")).select_from(ContestParticipant).outerjoin(solves,solves.c.uid==ContestParticipant.user_id).where(ContestParticipant.contest_id==cid,ContestParticipant.status=="registered").group_by(ContestParticipant.id,ContestParticipant.user_id).order_by(solved.desc(),penalty.asc(),case((func.max(solves.c.sat).is_(None),1),else_=0).asc(),func.max(solves.c.sat).asc(),ContestParticipant.id.asc()).limit(limit).offset(offset)
-    rows=db.execute(q).mappings().all(); return {"items":[dict(r) for r in rows],"next_cursor":None}
+    return select(ContestParticipant.id.label("participant_id"),ContestParticipant.user_id.label("user_id"),solved,penalty,func.max(solves.c.sat).label("last_solved_at"),case((func.max(solves.c.sat).is_(None),1),else_=0).label("last_null")).select_from(ContestParticipant).outerjoin(solves,solves.c.uid==ContestParticipant.user_id).where(ContestParticipant.contest_id==cid,ContestParticipant.status=="registered").group_by(ContestParticipant.id,ContestParticipant.user_id)
+
+def encode_leaderboard_cursor(row):
+    value={"solved":int(row["solved"]),"penalty":int(row["penalty"]),"last_null":int(row["last_null"]),"last_solved_at":row["last_solved_at"].isoformat() if row["last_solved_at"] else None,"participant_id":int(row["participant_id"])}
+    return base64.urlsafe_b64encode(json.dumps(value,separators=(",",":")).encode()).decode().rstrip("=")
+
+@router.get("/contests/{cid}/leaderboard")
+def leaderboard(cid:int,limit:int=Query(50,ge=1,le=200),offset:int|None=Query(default=None,ge=0),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    c=contest(db,cid)
+    if c.status not in {"published","archived"}: raise HTTPException(404,"NOT_FOUND")
+    if cursor and offset is not None: raise HTTPException(422,"VALIDATION_ERROR")
+    q=leaderboard_statement(cid,c).subquery("leaderboard")
+    if cursor:
+        try:
+            raw=json.loads(base64.urlsafe_b64decode(cursor.encode()+b"="*((4-len(cursor)%4)%4)))
+            solved=int(raw["solved"]); penalty=int(raw["penalty"]); null_rank=int(raw["last_null"]); participant_id=int(raw["participant_id"])
+            last_at=datetime.fromisoformat(raw["last_solved_at"]) if raw.get("last_solved_at") else None
+            if null_rank not in (0,1) or (null_rank==0 and last_at is None): raise ValueError("invalid cursor")
+        except Exception: raise HTTPException(422,"VALIDATION_ERROR")
+        after_rank=or_(q.c.solved<solved,and_(q.c.solved==solved,q.c.penalty>penalty),and_(q.c.solved==solved,q.c.penalty==penalty,q.c.last_null>null_rank))
+        same_rank=and_(q.c.solved==solved,q.c.penalty==penalty,q.c.last_null==null_rank)
+        if null_rank==0:
+            after_rank=or_(after_rank,and_(same_rank,q.c.last_solved_at>last_at),and_(same_rank,q.c.last_solved_at==last_at,q.c.participant_id>participant_id))
+        else:
+            after_rank=or_(after_rank,and_(same_rank,q.c.participant_id>participant_id))
+        query=select(q).where(after_rank)
+    else:
+        query=select(q)
+        if offset is not None: query=query.offset(offset)
+    query=query.order_by(q.c.solved.desc(),q.c.penalty.asc(),q.c.last_null.asc(),q.c.last_solved_at.asc(),q.c.participant_id.asc()).limit(limit+1)
+    rows=db.execute(query).mappings().all(); more=len(rows)>limit; items=[dict(r) for r in rows[:limit]]
+    for row in items: row.pop("last_null",None)
+    next_cursor=encode_leaderboard_cursor(rows[limit-1]) if more and items else None
+    return {"items":items,"next_cursor":next_cursor}

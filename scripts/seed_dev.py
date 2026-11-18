@@ -4,9 +4,15 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.auth import hash_password
 from app.models import (User, Organization, OrganizationMembership, Problem, ProblemVersion,
-                        TestSuite, TestCase, Contest, ContestProblem)
+                        TestSuite, TestCase, Contest, ContestProblem, ContestParticipant,
+                        Submission, JudgeAttempt)
 
 DEMO_PASSWORD="EasecodingDemo!2026"
+SAMPLE_PROGRAMS={
+    "Two Number Sum":"import sys\na, b = map(int, sys.stdin.read().split())\nprint(a + b)\n",
+    "String Rotation":"a = input().strip()\nb = input().strip()\nprint('YES' if len(a) == len(b) and b in a + a else 'NO')\n",
+    "Grid Paths":"from math import comb\nn, m = map(int, input().split())\nprint(comb(n + m - 2, n - 1))\n",
+}
 
 def ensure_user(db,email,name):
     row=db.scalar(select(User).where(User.email==email))
@@ -48,6 +54,18 @@ def ensure_contest(db,org,organizer,title,pins):
     if contest.status=="draft": contest.status="published"
     return contest
 
+def ensure_sample_program_submissions(db,contest,participant,pins):
+    registration=db.scalar(select(ContestParticipant).where(ContestParticipant.contest_id==contest.id,ContestParticipant.user_id==participant.id))
+    if not registration:
+        registration=ContestParticipant(contest_id=contest.id,user_id=participant.id,status="registered"); db.add(registration); db.flush()
+    for problem,version,suite in pins:
+        pin=db.scalar(select(ContestProblem).where(ContestProblem.contest_id==contest.id,ContestProblem.problem_id==problem.id))
+        if db.scalar(select(Submission.id).where(Submission.contest_participant_id==registration.id,Submission.contest_problem_id==pin.id)):
+            continue
+        submission=Submission(contest_participant_id=registration.id,contest_id=contest.id,contest_problem_id=pin.id,problem_version_id=version.id,test_suite_id=suite.id,source_code=SAMPLE_PROGRAMS[problem.title],language="python",runtime_config_snapshot=version.runtime_configuration)
+        db.add(submission); db.flush()
+        db.add(JudgeAttempt(submission_id=submission.id,attempt_number=1,reason="initial",requested_by_user_id=participant.id,status="queued"))
+
 def main():
     db=SessionLocal()
     try:
@@ -62,10 +80,12 @@ def main():
         ensure_membership(db,org_a,owner,"owner"); ensure_membership(db,org_a,organizer,"organizer"); ensure_membership(db,org_a,member,"member")
         ensure_membership(db,org_b,member,"owner")
         a1=ensure_problem(db,org_a,"Two Number Sum"); a2=ensure_problem(db,org_a,"String Rotation"); b1=ensure_problem(db,org_b,"Grid Paths")
-        ensure_contest(db,org_a,organizer,"Easecoding Demo Contest A",[a1,a2])
-        ensure_contest(db,org_b,member,"Easecoding Demo Contest B",[b1])
+        contest_a=ensure_contest(db,org_a,organizer,"Easecoding Demo Contest A",[a1,a2])
+        contest_b=ensure_contest(db,org_b,member,"Easecoding Demo Contest B",[b1])
+        ensure_sample_program_submissions(db,contest_a,participant,[a1,a2])
+        ensure_sample_program_submissions(db,contest_b,participant,[b1])
         db.commit()
-        print(f"Seeded 4 users, 2 organizations, 2 contests, 3 problems. Password: {DEMO_PASSWORD}")
+        print(f"Seeded 4 users, 2 organizations, 2 contests, 3 problems, and 3 queued Python sample submissions. Password: {DEMO_PASSWORD}")
     except Exception:
         db.rollback(); raise
     finally: db.close()
