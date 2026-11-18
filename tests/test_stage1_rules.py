@@ -157,16 +157,19 @@ def test_submission_window_registration_and_private_submission_access(client):
         attempt_id=db.scalar(select(JudgeAttempt.id).where(JudgeAttempt.submission_id==submission.json()["id"]))
         case_ids=list(db.scalars(select(DbTestCase.id).where(DbTestCase.test_suite_id==db.scalar(select(Submission.test_suite_id).where(Submission.id==submission.json()["id"]))).order_by(DbTestCase.id)))
     with SessionLocal() as db:
-        record_verdict(db,attempt_id,"ACCEPTED",score=100,private_diagnostics="PRIVATE_RESULT_SECRET",case_results=[
+        record_verdict(db,attempt_id,"ACCEPTED",score=100,public_message="Accepted.",private_diagnostics="PRIVATE_RESULT_SECRET HIDDEN_STDERR_SECRET hidden expected output: 2\n",case_results=[
             {"test_case_id":case_ids[0],"ordinal":1,"verdict":"ACCEPTED","execution_time_ms":2},
             {"test_case_id":case_ids[1],"ordinal":2,"verdict":"ACCEPTED","execution_time_ms":3},
         ])
     completed_result=client.get(f"/api/v1/submissions/{submission.json()['id']}/result",headers=user_a_headers)
     assert completed_result.json()["result"]["verdict"]=="ACCEPTED"
-    assert completed_result.json()["cases"]==[{"case_number":1,"verdict":"ACCEPTED","execution_time_ms":2}]
+    assert completed_result.json()["result"]=={"verdict":"ACCEPTED","public_message":"Accepted."}
+    assert completed_result.json()["cases"]==[]
     organizer_result=client.get(f"/api/v1/submissions/{submission.json()['id']}/result",headers=organizer_headers)
     assert [case["case_number"] for case in organizer_result.json()["cases"]]==[1,2]
     assert "PRIVATE_RESULT_SECRET" not in completed_result.text
+    assert "HIDDEN_STDERR_SECRET" not in completed_result.text
+    assert json.dumps("2\n") not in completed_result.text
     assert client.get(f"/api/v1/submissions/{submission.json()['id']}",headers=user_b_headers).status_code==404
     assert client.get(f"/api/v1/contests/{contest_id}/submissions",headers=user_a_headers).json()["items"][0]["id"]==submission.json()["id"]
 

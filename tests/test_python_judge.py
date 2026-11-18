@@ -1,5 +1,6 @@
 """MySQL-backed worker integration tests requiring a reachable Docker daemon."""
 from datetime import datetime, timedelta, timezone
+import os
 import subprocess
 import sys
 from uuid import uuid4
@@ -24,6 +25,10 @@ PROGRAMS = [
     pytest.param("print('x' * 70000)\n", "PRIVATE_EXPECTED\n", "RUNTIME_ERROR", 5.0, id="excessive-output"),
     pytest.param("def broken(:\n    pass\n", "PRIVATE_EXPECTED\n", "COMPILATION_ERROR", 5.0, id="compilation-error"),
 ]
+requires_docker = pytest.mark.skipif(
+    not os.path.exists("/var/run/docker.sock"),
+    reason="real-Docker integration test requires the Docker socket (run in worker service)",
+)
 
 
 def queued_submission(source, expected="OK\n", timeout=5.0):
@@ -70,6 +75,7 @@ def queued_submission(source, expected="OK\n", timeout=5.0):
 
 
 @pytest.mark.parametrize("source,expected,expected_verdict,timeout", PROGRAMS)
+@requires_docker
 def test_worker_runs_python_program_types_in_docker(source, expected, expected_verdict, timeout):
     event_id, attempt_id = queued_submission(source, expected, timeout)
     assert process_one(DockerPythonRunner(timeout_seconds=5.0), event_id=event_id)
@@ -105,12 +111,14 @@ def test_fake_runner_failure_is_judge_infrastructure_failure():
         assert "PRIVATE_INPUT" not in (verdict.public_message or "")
 
 
+@requires_docker
 def test_runner_executes_submission_from_mounted_file():
     result = DockerPythonRunner(timeout_seconds=5.0).run_case("import sys; print(sys.argv[0])\n", "")
     assert result.verdict == "ACCEPTED"
     assert result.stdout.strip() == "/submission/main.py"
 
 
+@requires_docker
 def test_two_workers_racing_one_outbox_event_only_execute_it_once():
     event_id, attempt_id = queued_submission("import time; time.sleep(1); print('PRIVATE_EXPECTED')\n", "PRIVATE_EXPECTED\n")
     command = [sys.executable, "-m", "app.worker", "--once", "--event-id", str(event_id)]

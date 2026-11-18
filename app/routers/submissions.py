@@ -63,8 +63,7 @@ def submission_result(sid:int,u:User=Depends(get_current_user),db:Session=Depend
     verdict=db.scalar(select(Verdict).where(Verdict.judge_attempt_id==attempt.id))
     result=None
     if verdict:
-        result={"verdict":verdict.verdict,"score":verdict.score,"execution_time_ms":verdict.execution_time_ms,
-                "memory_used_kb":verdict.memory_used_kb,"public_message":verdict.public_message}
+        result={"verdict":verdict.verdict,"public_message":verdict.public_message}
     case_rows=db.execute(
         select(JudgeCaseResult,TestCase.is_hidden)
         .join(TestCase,TestCase.id==JudgeCaseResult.test_case_id)
@@ -73,7 +72,7 @@ def submission_result(sid:int,u:User=Depends(get_current_user),db:Session=Depend
     ).all()
     cases=[]
     for case_result,is_hidden in case_rows:
-        if organizer or not is_hidden:
+        if organizer:
             cases.append({"case_number":case_result.ordinal if organizer else len(cases)+1,
                           "verdict":case_result.verdict,"execution_time_ms":case_result.execution_time_ms})
     return {"submission_id":s.id,"status":s.status,"attempt_number":attempt.attempt_number,
