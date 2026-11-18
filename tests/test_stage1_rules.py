@@ -9,7 +9,7 @@ from sqlalchemy.exc import DBAPIError
 from app.db import SessionLocal
 from app.models import (User, Organization, OrganizationMembership, Contest, Problem,
                         ProblemVersion, TestSuite as DbTestSuite, ContestProblem, ContestParticipant,
-                        Submission, JudgeAttempt, Verdict)
+                        Submission, JudgeAttempt, Verdict, OutboxEvent)
 from app.routers.contests import leaderboard_statement
 from app.services.verdicts import record_verdict
 
@@ -140,6 +140,22 @@ def test_submission_window_registration_and_private_submission_access(client):
     assert client.post(f"/api/v1/contests/{contest_id}/register",headers=user_a_headers).status_code==201
     submission=client.post(f"/api/v1/contests/{contest_id}/problems/{pin_id}/submissions",headers=user_a_headers,json={"source_code":"print(1)","language":"python"})
     assert submission.status_code==201, submission.text
+    with SessionLocal() as db:
+        created=db.get(Submission,submission.json()["id"])
+        attempt=db.scalar(select(JudgeAttempt).where(JudgeAttempt.submission_id==created.id))
+        event=db.scalar(select(OutboxEvent).where(OutboxEvent.judge_attempt_id==attempt.id))
+        assert attempt.status=="queued" and event.event_type=="judge.requested" and event.status=="pending"
+    pending_result=client.get(f"/api/v1/submissions/{submission.json()['id']}/result",headers=user_a_headers)
+    assert pending_result.status_code==200
+    assert pending_result.json()["status"]=="queued" and pending_result.json()["result"] is None
+    assert client.get(f"/api/v1/submissions/{submission.json()['id']}/result",headers=user_b_headers).status_code==404
+    with SessionLocal() as db:
+        attempt_id=db.scalar(select(JudgeAttempt.id).where(JudgeAttempt.submission_id==submission.json()["id"]))
+    with SessionLocal() as db:
+        record_verdict(db,attempt_id,"ACCEPTED",score=100,private_diagnostics="PRIVATE_RESULT_SECRET")
+    completed_result=client.get(f"/api/v1/submissions/{submission.json()['id']}/result",headers=user_a_headers)
+    assert completed_result.json()["result"]["verdict"]=="ACCEPTED"
+    assert "PRIVATE_RESULT_SECRET" not in completed_result.text
     assert client.get(f"/api/v1/submissions/{submission.json()['id']}",headers=user_b_headers).status_code==404
     assert client.get(f"/api/v1/contests/{contest_id}/submissions",headers=user_a_headers).json()["items"][0]["id"]==submission.json()["id"]
 

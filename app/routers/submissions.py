@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.auth import get_current_user
 from app.config import settings
-from app.models import User, Contest, ContestParticipant, ContestProblem, ProblemVersion, Submission, JudgeAttempt, Verdict
+from app.models import User, Contest, ContestParticipant, ContestProblem, ProblemVersion, Submission, JudgeAttempt, Verdict, OutboxEvent
 from app.schemas import SubmissionCreate, VerdictCreate
 from app.permissions import get_role, page
 from app.services.verdicts import record_verdict
@@ -31,7 +31,9 @@ def submit(cid:int,cpid:int,b:SubmissionCreate,u:User=Depends(get_current_user),
     # Serialize the submission/attempt write in a single transaction.
     version=db.get(ProblemVersion,cp.problem_version_id)
     s=Submission(contest_participant_id=p.id,contest_id=cid,contest_problem_id=cp.id,problem_version_id=cp.problem_version_id,test_suite_id=cp.test_suite_id,source_code=b.source_code,language="python",runtime_config_snapshot=version.runtime_configuration)
-    db.add(s); db.flush(); a=JudgeAttempt(submission_id=s.id,attempt_number=1,reason="initial",requested_by_user_id=u.id,status="queued"); db.add(a); db.commit(); db.refresh(s); return s
+    db.add(s); db.flush(); a=JudgeAttempt(submission_id=s.id,attempt_number=1,reason="initial",requested_by_user_id=u.id,status="queued"); db.add(a); db.flush()
+    db.add(OutboxEvent(judge_attempt_id=a.id,event_type="judge.requested",status="pending"))
+    db.commit(); db.refresh(s); return s
 @router.get("/contests/{cid}/submissions")
 def contest_submissions(cid:int,limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     c=db.get(Contest,cid)
@@ -47,6 +49,23 @@ def submission(sid:int,u:User=Depends(get_current_user),db:Session=Depends(get_d
     s=db.get(Submission,sid)
     if not s: raise HTTPException(404,"NOT_FOUND")
     owned_or_organizer(db,u,s); return s
+@router.get("/submissions/{sid}/result")
+def submission_result(sid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    s=db.get(Submission,sid)
+    if not s: raise HTTPException(404,"NOT_FOUND")
+    owned_or_organizer(db,u,s)
+    attempt=db.get(JudgeAttempt,s.authoritative_attempt_id) if s.authoritative_attempt_id else db.scalar(
+        select(JudgeAttempt).where(JudgeAttempt.submission_id==sid).order_by(JudgeAttempt.attempt_number.desc(),JudgeAttempt.id.desc()).limit(1)
+    )
+    if not attempt:
+        return {"submission_id":s.id,"status":s.status,"attempt":None}
+    verdict=db.scalar(select(Verdict).where(Verdict.judge_attempt_id==attempt.id))
+    result=None
+    if verdict:
+        result={"verdict":verdict.verdict,"score":verdict.score,"execution_time_ms":verdict.execution_time_ms,
+                "memory_used_kb":verdict.memory_used_kb,"public_message":verdict.public_message}
+    return {"submission_id":s.id,"status":s.status,"attempt_number":attempt.attempt_number,
+            "attempt_status":attempt.status,"result":result}
 @router.get("/submissions/{sid}/source")
 def source(sid:int,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     s=db.get(Submission,sid)

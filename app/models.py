@@ -148,4 +148,14 @@ class Verdict(Base):
     private_diagnostics: Mapped[str|None]=mapped_column(Text)
     created_at: Mapped[datetime]=mapped_column(DateTime(6), server_default=func.utc_timestamp(6), nullable=False)
 
+class OutboxEvent(Base):
+    __tablename__="outbox_events"
+    __table_args__=(UniqueConstraint("judge_attempt_id","event_type"),CheckConstraint("status IN ('pending','processing','published')"),Index("ix_outbox_status_id","status","id"))
+    id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    judge_attempt_id: Mapped[int]=mapped_column(ForeignKey("judge_attempts.id"), nullable=False)
+    event_type: Mapped[str]=mapped_column(String(64), nullable=False)
+    status: Mapped[str]=mapped_column(String(16), nullable=False, server_default="pending")
+    created_at: Mapped[datetime]=mapped_column(DateTime(6), server_default=func.utc_timestamp(6), nullable=False)
+    published_at: Mapped[datetime|None]=mapped_column(DateTime(6))
+
 # Added after judge_attempts exists in migration 0001 (intentional circular reference).
