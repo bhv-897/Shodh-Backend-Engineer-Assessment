@@ -1,4 +1,4 @@
-# Easecoding contest backend
+# Shodh AI Backend Engineer Assesment
 
 FastAPI / SQLAlchemy 2.0 API for contest setup, submissions and a minimal Python 3.12 judge worker.
 
