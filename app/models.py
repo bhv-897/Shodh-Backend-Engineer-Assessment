@@ -104,7 +104,7 @@ class ContestProblem(Base):
 
 class Submission(Base):
     __tablename__="submissions"
-    __table_args__=(ForeignKeyConstraint(["contest_participant_id","contest_id"],["contest_participants.id","contest_participants.contest_id"]),ForeignKeyConstraint(["contest_problem_id","contest_id","problem_version_id","test_suite_id"],["contest_problems.id","contest_problems.contest_id","contest_problems.problem_version_id","contest_problems.test_suite_id"]),UniqueConstraint("id","contest_id"),Index("ix_submissions_contest_submitted_id","contest_id","submitted_at","id"),Index("ix_submissions_participant_problem_submitted","contest_participant_id","contest_problem_id","submitted_at","id"))
+    __table_args__=(ForeignKeyConstraint(["contest_participant_id","contest_id"],["contest_participants.id","contest_participants.contest_id"]),ForeignKeyConstraint(["contest_problem_id","contest_id","problem_version_id","test_suite_id"],["contest_problems.id","contest_problems.contest_id","contest_problems.problem_version_id","contest_problems.test_suite_id"]),UniqueConstraint("id","contest_id"),Index("ix_submissions_contest_submitted_id","contest_id","submitted_at","id"),Index("ix_submissions_participant_problem_submitted","contest_participant_id","contest_problem_id","submitted_at","id","authoritative_attempt_id"))
     id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
     contest_participant_id: Mapped[int]=mapped_column(BigInteger, nullable=False)
     contest_id: Mapped[int]=mapped_column(BigInteger, nullable=False)

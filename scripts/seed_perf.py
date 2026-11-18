@@ -203,12 +203,8 @@ def main():
 
         lines.extend([
             "=== Plan summary ===",
-            "Schema indexes used: uq_participant_contest_user, ix_submissions_participant_problem_submitted, uq_verdict_attempt, judge_attempts PRIMARY.",
-            "Derived-result access: MySQL-created <auto_key0> on the materialized window result; temporary-table scans are derived results, not base-table scans.",
-            "Base-table full scans: none. Materialized leaderboard/temporary results are scanned (200 output rows).",
-            "Sorts: 2 TREE Sort nodes: window input ordering and final leaderboard ranking (filesort-like operations).",
-            "Estimated vs actual rows: participants index lookup 200 vs 200; registered filter 20 vs 200; submission join 472 vs 5,000 total (23.6 vs 25 per participant); accepted verdict filter 0.264 estimated vs 0.254 actual per attempt (1,268 accepted rows); grouped participants 200 actual.",
-            "EXPLAIN ANALYZE total: about 59.7 ms; final limited output 51 rows, derived leaderboard 200 rows.",
+            "Use the raw EXPLAIN FORMAT=TREE and EXPLAIN ANALYZE above for index choices, row estimates, actual rows, scans, sorts and elapsed timings.",
+            "This summary intentionally avoids hard-coded estimates and timings so it remains valid when MySQL, indexes or the fixture change.",
             "",
         ])
 

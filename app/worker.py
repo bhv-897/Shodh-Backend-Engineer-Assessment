@@ -13,10 +13,11 @@ from sqlalchemy import and_, case, exists, or_, select, update
 
 from app.db import SessionLocal
 from app.judge_runner import DockerPythonRunner, judge_submission
+from app.logging_config import configure_json_logging
 from app.models import JudgeAttempt, OutboxEvent, Submission, TestCase
 from app.services.verdicts import record_verdict
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+configure_json_logging(os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("app.worker")
 POLL_SECONDS = float(os.getenv("WORKER_POLL_SECONDS", "1"))
 LEASE_SECONDS = int(os.getenv("WORKER_LEASE_SECONDS", "300"))
@@ -112,6 +113,7 @@ def process_one(runner=None, event_id: int | None = None) -> bool:
                 "attempt_id": attempt.id,
                 "submission_id": submission.id,
                 "source_code": submission.source_code,
+                "runtime_configuration": submission.runtime_config_snapshot or {},
                 "timeout_seconds": float(submission.runtime_config_snapshot.get("time_limit_seconds", 2.0)),
                 "retry_exhausted": retry_exhausted,
                 "previous_lease_token": previous_lease_token,
@@ -140,6 +142,7 @@ def process_one(runner=None, event_id: int | None = None) -> bool:
             event_data["source_code"],
             event_data["cases"],
             event_data["timeout_seconds"],
+            event_data["runtime_configuration"],
         )
     except Exception as exc:  # worker and Docker failures are judge infrastructure failures
         diagnostics = f"{type(exc).__name__}: {exc}"
@@ -160,7 +163,13 @@ def process_one(runner=None, event_id: int | None = None) -> bool:
             event = db.scalar(select(OutboxEvent).where(OutboxEvent.id == event_data["event_id"]).with_for_update())
             event.status = "published"
             event.published_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    logger.info("Processed judge request event_id=%s verdict=%s", event_data["event_id"], verdict)
+    logger.info("Judge attempt completed", extra={
+        "event": "judge.attempt.completed",
+        "request_id": None,
+        "submission_id": event_data["submission_id"],
+        "attempt_id": event_data["attempt_id"],
+        "verdict": verdict,
+    })
     return True
 
 
@@ -176,14 +185,20 @@ def main():
         except Exception:
             logger.error("One-shot judge worker failed")
             return 1
-    logger.info("Judge worker started")
+    logger.info("Judge worker started", extra={
+        "event": "judge.worker.started", "request_id": None,
+        "submission_id": None, "attempt_id": None,
+    })
     while True:
         try:
             if not process_one():
                 time.sleep(POLL_SECONDS)
         except Exception:
             # Do not include submission data, testcase content, stderr, or diagnostics in logs.
-            logger.error("Judge worker iteration failed")
+            logger.error("Judge worker iteration failed", extra={
+                "event": "judge.worker.failure", "request_id": None,
+                "submission_id": None, "attempt_id": None,
+            })
             time.sleep(POLL_SECONDS)
     return 0
 

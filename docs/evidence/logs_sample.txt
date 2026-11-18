@@ -1,0 +1,1 @@
+{"timestamp":"2026-11-18T00:00:00+00:00","level":"info","logger":"app.worker","event":"judge.attempt.completed","request_id":null,"submission_id":42,"attempt_id":84,"message":"Judge attempt completed","verdict":"ACCEPTED"}

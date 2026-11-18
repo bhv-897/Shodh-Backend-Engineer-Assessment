@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import hashlib, json
-from fastapi import APIRouter, Depends, HTTPException, Response, Query, Header
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Response, Query, Header, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from app.permissions import get_role, page
 from app.services.verdicts import record_verdict
 
 router=APIRouter(tags=["submissions"])
+logger=logging.getLogger("app.api.submissions")
 def utcnow(): return datetime.now(timezone.utc).replace(tzinfo=None)
 def owned_or_organizer(db,u,s):
     p=db.get(ContestParticipant,s.contest_participant_id)
@@ -38,7 +40,7 @@ def _replay_idempotent_submission(db, user_id, contest_id, key, fingerprint, res
     return submission
 
 @router.post("/contests/{cid}/problems/{cpid}/submissions",status_code=201)
-def submit(cid:int,cpid:int,b:SubmissionCreate,response:Response,idempotency_key:str|None=Header(default=None,alias="Idempotency-Key",max_length=128),u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+def submit(cid:int,cpid:int,request:Request,b:SubmissionCreate,response:Response,idempotency_key:str|None=Header(default=None,alias="Idempotency-Key",max_length=128),u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     c=db.execute(select(Contest).where(Contest.id==cid).with_for_update()).scalar_one_or_none(); cp=db.scalar(select(ContestProblem).where(ContestProblem.id==cpid,ContestProblem.contest_id==cid))
     if not c or not cp: raise HTTPException(404,"NOT_FOUND")
     now=utcnow()
@@ -80,10 +82,15 @@ def submit(cid:int,cpid:int,b:SubmissionCreate,response:Response,idempotency_key
             if replay is not None:
                 return replay
         raise
-    db.refresh(s); return s
+    db.refresh(s)
+    logger.info("Submission queued",extra={
+        "event":"submission.queued","request_id":request.state.request_id,
+        "submission_id":s.id,"attempt_id":a.id,
+    })
+    return s
 
 @router.post("/submissions/{sid}/rejudge",status_code=202)
-def rejudge(sid:int,b:RejudgeCreate|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+def rejudge(sid:int,request:Request,b:RejudgeCreate|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     s=db.execute(select(Submission).where(Submission.id==sid).with_for_update()).scalar_one_or_none()
     if not s: raise HTTPException(404,"NOT_FOUND")
     contest=db.get(Contest,s.contest_id)
@@ -107,6 +114,10 @@ def rejudge(sid:int,b:RejudgeCreate|None=None,u:User=Depends(get_current_user),d
     db.add(OutboxEvent(judge_attempt_id=attempt.id,event_type="judge.requested",status="pending"))
     db.commit()
     db.refresh(attempt)
+    logger.info("Rejudge queued",extra={
+        "event":"submission.rejudge.queued","request_id":request.state.request_id,
+        "submission_id":sid,"attempt_id":attempt.id,
+    })
     return attempt
 
 @router.get("/contests/{cid}/submissions")

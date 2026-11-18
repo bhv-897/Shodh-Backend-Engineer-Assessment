@@ -3,11 +3,14 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, DBAPIError
+from app.logging_config import configure_json_logging
+configure_json_logging()
+
 from app.db import get_db
 from app.routers import auth, organizations, problems, contests, submissions
 
-logging.basicConfig(level=logging.INFO)
 app=FastAPI(title="Easecoding Contest API",version="1.0.0")
+api_logger=logging.getLogger("app.api")
 def error_body(request,code,message,details=None):
     return {"error":{"code":code,"message":message,"details":details or [],"request_id":getattr(request.state,"request_id","")}}
 @app.exception_handler(HTTPException)
@@ -24,9 +27,13 @@ async def request_id_middleware(request:Request,call_next):
     rid=request.headers.get("X-Request-ID") or str(uuid.uuid4()); request.state.request_id=rid
     try: response=await call_next(request)
     except Exception:
-        logging.exception("Unhandled request error request_id=%s",rid)
+        api_logger.exception("Unhandled request error",extra={"event":"http.request.failure","request_id":rid,"submission_id":None,"attempt_id":None})
         response=JSONResponse(status_code=500,content={"error":{"code":"INTERNAL_ERROR","message":"An internal error occurred","details":[],"request_id":rid}})
     response.headers["X-Request-ID"]=rid
+    api_logger.info("HTTP request completed",extra={
+        "event":"http.request.completed","request_id":rid,
+        "submission_id":None,"attempt_id":None,"status_code":response.status_code,
+    })
     return response
 @app.exception_handler(IntegrityError)
 @app.exception_handler(DBAPIError)

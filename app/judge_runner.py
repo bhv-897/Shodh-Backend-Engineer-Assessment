@@ -21,6 +21,7 @@ class CaseResult:
     stdout: str = ""
     stderr: str = ""
     execution_time_ms: int = 0
+    public_message: str | None = None
 
 
 class DockerPythonRunner:
@@ -62,7 +63,13 @@ class DockerPythonRunner:
         except ImageNotFound:
             self.client.images.pull(IMAGE)
 
-    def run_case(self, source_code: str, input_data: str, timeout_seconds: float | None = None) -> CaseResult:
+    def run_case(
+        self,
+        source_code: str,
+        input_data: str,
+        timeout_seconds: float | None = None,
+        runtime_configuration: dict | None = None,
+    ) -> CaseResult:
         self._ensure_image()
         labels = self._lease_labels()
         volume_labels = {**labels, "app": "easecoding-judge-case"}
@@ -77,10 +84,23 @@ class DockerPythonRunner:
         overflow = threading.Event()
         started = None
         compile_failure_marker = f"EASECODING_COMPILE_FAILURE_{uuid4().hex}"
+        function_missing_marker = f"EASECODING_FUNCTION_MISSING_{uuid4().hex}"
+        runtime_configuration = runtime_configuration or {}
+        function_name = runtime_configuration.get("function_name", "")
+        function_driver = runtime_configuration.get("function_driver", "json_args")
+        function_mode = runtime_configuration.get("execution_mode") == "function"
         compile_and_run = (
-            "import sys, traceback\n"
+            "import json, subprocess, sys, traceback\n"
             "path = '/submission/main.py'\n"
             f"marker = {compile_failure_marker!r}\n"
+            f"missing_marker = {function_missing_marker!r}\n"
+            f"function_mode = {function_mode!r}\n"
+            f"function_name = {function_name!r}\n"
+            f"function_driver = {function_driver!r}\n"
+            "compiled = subprocess.run([sys.executable, '-I', '-X', 'pycache_prefix=/tmp/pycache', '-m', 'py_compile', path], capture_output=True, text=True)\n"
+            "if compiled.returncode != 0:\n"
+            "    sys.stderr.write(marker + '\\n' + compiled.stderr)\n"
+            "    raise SystemExit(86)\n"
             "try:\n"
             "    with open(path, encoding='utf-8') as source_file:\n"
             "        source = source_file.read()\n"
@@ -89,9 +109,42 @@ class DockerPythonRunner:
             "    sys.stderr.write(marker + '\\n')\n"
             "    traceback.print_exc()\n"
             "    raise SystemExit(86)\n"
-            "sys.stdin = open('/submission/input.txt', encoding='utf-8')\n"
-            "sys.argv = [path]\n"
-            "exec(code, {'__name__': '__main__', '__file__': path})\n"
+            "namespace = {'__name__': '__main__', '__file__': path}\n"
+            "if function_mode and function_driver == 'linked_list':\n"
+            "    class ListNode:\n"
+            "        def __init__(self, val=0, next=None):\n"
+            "            self.val = val\n"
+            "            self.next = next\n"
+            "    namespace['ListNode'] = ListNode\n"
+            "if function_mode:\n"
+            "    exec(code, namespace)\n"
+            "    function = namespace.get(function_name)\n"
+            "    if not callable(function):\n"
+            "        sys.stderr.write(missing_marker + '\\nFunction ' + function_name + ' not found\\n')\n"
+            "        raise SystemExit(87)\n"
+            "    with open('/submission/input.txt', encoding='utf-8') as input_file:\n"
+            "        arguments = json.load(input_file)\n"
+            "    if function_driver == 'linked_list':\n"
+            "        head = None\n"
+            "        for value in reversed(arguments):\n"
+            "            head = ListNode(value, head)\n"
+            "        result = function(head)\n"
+            "        values = []\n"
+            "        seen = set()\n"
+            "        while result is not None:\n"
+            "            if id(result) in seen:\n"
+            "                raise RuntimeError('linked list result contains a cycle')\n"
+            "            seen.add(id(result))\n"
+            "            values.append(result.val)\n"
+            "            result = result.next\n"
+            "        print(json.dumps(values, separators=(',', ':')))\n"
+            "    else:\n"
+            "        result = function(**arguments) if isinstance(arguments, dict) else function(*arguments) if isinstance(arguments, list) else function(arguments)\n"
+            "        print(json.dumps(result, separators=(',', ':')))\n"
+            "else:\n"
+            "    sys.stdin = open('/submission/input.txt', encoding='utf-8')\n"
+            "    sys.argv = [path]\n"
+            "    exec(code, namespace)\n"
         )
         try:
             # Use a one-off writable staging container, then mount its unique volume
@@ -203,16 +256,18 @@ class DockerPythonRunner:
         decoded_diagnostics = diagnostics.decode("utf-8", "replace")
         if exit_code == 86 and compile_failure_marker in decoded_diagnostics:
             return CaseResult("COMPILATION_ERROR", output.decode("utf-8", "replace"), decoded_diagnostics, elapsed)
+        if exit_code == 87 and function_missing_marker in decoded_diagnostics:
+            return CaseResult("COMPILATION_ERROR", output.decode("utf-8", "replace"), decoded_diagnostics, elapsed, f"Function {function_name} not found")
         if exit_code != 0:
             return CaseResult("RUNTIME_ERROR", output.decode("utf-8", "replace"), decoded_diagnostics, elapsed)
         return CaseResult("ACCEPTED", output.decode("utf-8", "replace"), decoded_diagnostics, elapsed)
 
 
-def judge_submission(runner: DockerPythonRunner, source_code: str, cases: list[dict], timeout_seconds: float) -> tuple[str, int, int, str, str, list[dict]]:
+def judge_submission(runner: DockerPythonRunner, source_code: str, cases: list[dict], timeout_seconds: float, runtime_configuration: dict | None = None) -> tuple[str, int, int, str, str, list[dict]]:
     total_ms = 0
     case_results = []
     for ordinal, case in enumerate(cases, start=1):
-        result = runner.run_case(source_code, case["input_data"], timeout_seconds)
+        result = runner.run_case(source_code, case["input_data"], timeout_seconds, runtime_configuration)
         total_ms += result.execution_time_ms
         case_verdict = result.verdict
         if case_verdict == "ACCEPTED" and result.stdout.strip() != case["expected_output"].strip():
@@ -230,6 +285,6 @@ def judge_submission(runner: DockerPythonRunner, source_code: str, cases: list[d
         )
         diagnostic = diagnostic.encode("utf-8")[:60 * 1024].decode("utf-8", "ignore")
         if case_verdict != "ACCEPTED":
-            message = "The answer is incorrect." if case_verdict == "WRONG_ANSWER" else "The program did not pass all tests."
+            message = result.public_message or ("The answer is incorrect." if case_verdict == "WRONG_ANSWER" else "The program did not pass all tests.")
             return case_verdict, 0, total_ms, message, diagnostic, case_results
     return "ACCEPTED", 100, total_ms, "Accepted.", None, case_results

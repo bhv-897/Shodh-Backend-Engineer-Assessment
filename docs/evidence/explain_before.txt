@@ -1,0 +1,88 @@
+Seed: 20261118
+Participants: 200
+Problems: 3
+Submissions: 5000
+Contest ID: 403
+Seeded participants: 200
+Seeded problems: 3
+Seeded submissions with one authoritative completed attempt and verdict each: 5000
+
+=== Exact default leaderboard SQL ===
+SELECT leaderboard.participant_id, leaderboard.user_id, leaderboard.solved, leaderboard.penalty, leaderboard.last_solved_at, leaderboard.last_null 
+FROM (SELECT contest_participants.id AS participant_id, contest_participants.user_id AS user_id, count(anon_1.sid) AS solved, CAST(coalesce(sum(timestampdiff(MINUTE, '2026-11-18 10:15:30.537942', anon_1.sat) + coalesce((SELECT count(submissions.id) AS count_1 
+FROM submissions INNER JOIN judge_attempts ON judge_attempts.id = submissions.authoritative_attempt_id INNER JOIN verdicts ON verdicts.judge_attempt_id = judge_attempts.id 
+WHERE submissions.contest_participant_id = contest_participants.id AND submissions.contest_problem_id = anon_1.pid AND verdicts.verdict != 'ACCEPTED' AND verdicts.verdict != 'JUDGE_INFRA_FAILURE' AND (submissions.submitted_at < anon_1.sat OR submissions.submitted_at = anon_1.sat AND submissions.id < anon_1.sid)), 0) * 20), 0) AS SIGNED INTEGER) AS penalty, max(anon_1.sat) AS last_solved_at, CASE WHEN (max(anon_1.sat) IS NULL) THEN 1 ELSE 0 END AS last_null 
+FROM contest_participants LEFT OUTER JOIN (SELECT anon_2.uid AS uid, anon_2.pid AS pid, anon_2.sid AS sid, anon_2.sat AS sat 
+FROM (SELECT contest_participants.user_id AS uid, submissions.contest_problem_id AS pid, submissions.id AS sid, submissions.submitted_at AS sat, row_number() OVER (PARTITION BY contest_participants.user_id, submissions.contest_problem_id ORDER BY submissions.submitted_at, submissions.id) AS rn 
+FROM contest_participants INNER JOIN submissions ON submissions.contest_participant_id = contest_participants.id INNER JOIN judge_attempts ON judge_attempts.id = submissions.authoritative_attempt_id INNER JOIN verdicts ON verdicts.judge_attempt_id = judge_attempts.id 
+WHERE contest_participants.contest_id = 403 AND contest_participants.status = 'registered' AND verdicts.verdict = 'ACCEPTED') AS anon_2 
+WHERE anon_2.rn = 1) AS anon_1 ON anon_1.uid = contest_participants.user_id 
+WHERE contest_participants.contest_id = 403 AND contest_participants.status = 'registered' GROUP BY contest_participants.id, contest_participants.user_id) AS leaderboard ORDER BY leaderboard.solved DESC, leaderboard.penalty ASC, leaderboard.last_null ASC, leaderboard.last_solved_at ASC, leaderboard.participant_id ASC 
+ LIMIT 51
+
+=== EXPLAIN FORMAT=TREE ===
+-> Limit: 51 row(s)  (cost=2.6..2.6 rows=0)
+    -> Sort: leaderboard.solved DESC, leaderboard.penalty, leaderboard.last_null, leaderboard.last_solved_at, leaderboard.participant_id, limit input to 51 row(s) per chunk  (cost=2.6..2.6 rows=0)
+        -> Table scan on leaderboard  (cost=2.5..2.5 rows=0)
+            -> Materialize  (cost=0..0 rows=0)
+                -> Table scan on <temporary>
+                    -> Aggregate using temporary table
+                        -> Nested loop left join  (cost=31 rows=0)
+                            -> Filter: (contest_participants.`status` = 'registered')  (cost=5 rows=20)
+                                -> Index lookup on contest_participants using uq_participant_contest_user (contest_id=403)  (cost=5 rows=200)
+                            -> Index lookup on anon_2 using <auto_key0> (uid=contest_participants.user_id, rn=1)  (cost=0.255..1.33 rows=5.2)
+                                -> Materialize  (cost=0..0 rows=0)
+                                    -> Window aggregate: row_number() OVER (PARTITION BY contest_participants.user_id,submissions.contest_problem_id ORDER BY submissions.submitted_at,submissions.id ) 
+                                        -> Sort: contest_participants.user_id, submissions.contest_problem_id, submissions.submitted_at, submissions.id
+                                            -> Stream results  (cost=238 rows=52.1)
+                                                -> Nested loop inner join  (cost=238 rows=52.1)
+                                                    -> Nested loop inner join  (cost=219 rows=52.1)
+                                                        -> Nested loop inner join  (cost=73.1 rows=194)
+                                                            -> Filter: (contest_participants.`status` = 'registered')  (cost=5 rows=20)
+                                                                -> Index lookup on contest_participants using uq_participant_contest_user (contest_id=403)  (cost=5 rows=200)
+                                                            -> Filter: (submissions.authoritative_attempt_id is not null)  (cost=2.48 rows=9.72)
+                                                                -> Index lookup on submissions using fk_submission_participant_contest (contest_participant_id=contest_participants.id)  (cost=2.48 rows=9.72)
+                                                        -> Filter: (verdicts.verdict = 'ACCEPTED')  (cost=0.653 rows=0.268)
+                                                            -> Single-row index lookup on verdicts using uq_verdict_attempt (judge_attempt_id=submissions.authoritative_attempt_id)  (cost=0.653 rows=1)
+                                                    -> Single-row covering index lookup on judge_attempts using PRIMARY (id=submissions.authoritative_attempt_id)  (cost=0.252 rows=1)
+                    -> Select #3 (subquery in projection; dependent)
+                        -> Aggregate: count(submissions.id)  (cost=3.66 rows=1)
+                            -> Nested loop inner join  (cost=3.54 rows=1.18)
+                                -> Nested loop inner join  (cost=3.13 rows=1.18)
+                                    -> Filter: (submissions.authoritative_attempt_id is not null)  (cost=1.61 rows=2.01)
+                                        -> Index lookup on submissions using ix_submissions_participant_problem_submitted (contest_participant_id=contest_participants.id, contest_problem_id=anon_2.pid), with index condition: ((submissions.contest_problem_id = anon_2.pid) and ((submissions.submitted_at < anon_2.sat) or ((submissions.submitted_at = anon_2.sat) and (submissions.id < anon_2.sid))))  (cost=1.61 rows=5.65)
+                                    -> Filter: ((verdicts.verdict <> 'ACCEPTED') and (verdicts.verdict <> 'JUDGE_INFRA_FAILURE'))  (cost=0.682 rows=0.589)
+                                        -> Single-row index lookup on verdicts using uq_verdict_attempt (judge_attempt_id=submissions.authoritative_attempt_id)  (cost=0.682 rows=1)
+                                -> Single-row covering index lookup on judge_attempts using PRIMARY (id=submissions.authoritative_attempt_id)  (cost=0.335 rows=1)
+
+
+=== EXPLAIN ANALYZE ===
+-> Limit: 51 row(s)  (cost=2.6..2.6 rows=0) (actual time=90.2..90.2 rows=51 loops=1)
+    -> Sort: leaderboard.solved DESC, leaderboard.penalty, leaderboard.last_null, leaderboard.last_solved_at, leaderboard.participant_id, limit input to 51 row(s) per chunk  (cost=2.6..2.6 rows=0) (actual time=90.2..90.2 rows=51 loops=1)
+        -> Table scan on leaderboard  (cost=2.5..2.5 rows=0) (actual time=89.9..89.9 rows=200 loops=1)
+            -> Materialize  (cost=0..0 rows=0) (actual time=89.9..89.9 rows=200 loops=1)
+                -> Table scan on <temporary>  (actual time=89.7..89.7 rows=200 loops=1)
+                    -> Aggregate using temporary table  (actual time=89.7..89.7 rows=200 loops=1)
+                        -> Nested loop left join  (cost=31 rows=0) (actual time=63.3..64.3 rows=537 loops=1)
+                            -> Filter: (contest_participants.`status` = 'registered')  (cost=5 rows=20) (actual time=0.894..1.22 rows=200 loops=1)
+                                -> Index lookup on contest_participants using uq_participant_contest_user (contest_id=403)  (cost=5 rows=200) (actual time=0.863..1.09 rows=200 loops=1)
+                            -> Index lookup on anon_2 using <auto_key0> (uid=contest_participants.user_id, rn=1)  (cost=0.255..1.33 rows=5.2) (actual time=0.313..0.314 rows=2.69 loops=200)
+                                -> Materialize  (cost=0..0 rows=0) (actual time=62.3..62.3 rows=1268 loops=1)
+                                    -> Window aggregate: row_number() OVER (PARTITION BY contest_participants.user_id,submissions.contest_problem_id ORDER BY submissions.submitted_at,submissions.id )   (actual time=59.7..60.2 rows=1268 loops=1)
+                                        -> Sort: contest_participants.user_id, submissions.contest_problem_id, submissions.submitted_at, submissions.id  (actual time=59.6..59.7 rows=1268 loops=1)
+                                            -> Stream results  (cost=238 rows=52.1) (actual time=1.85..58.2 rows=1268 loops=1)
+                                                -> Nested loop inner join  (cost=238 rows=52.1) (actual time=1.85..57.3 rows=1268 loops=1)
+                                                    -> Nested loop inner join  (cost=219 rows=52.1) (actual time=1.76..49.7 rows=1268 loops=1)
+                                                        -> Nested loop inner join  (cost=73.1 rows=194) (actual time=0.986..22.7 rows=5000 loops=1)
+                                                            -> Filter: (contest_participants.`status` = 'registered')  (cost=5 rows=20) (actual time=0.0869..1.51 rows=200 loops=1)
+                                                                -> Index lookup on contest_participants using uq_participant_contest_user (contest_id=403)  (cost=5 rows=200) (actual time=0.0856..1.43 rows=200 loops=1)
+                                                            -> Filter: (submissions.authoritative_attempt_id is not null)  (cost=2.48 rows=9.72) (actual time=0.0443..0.104 rows=25 loops=200)
+                                                                -> Index lookup on submissions using fk_submission_participant_contest (contest_participant_id=contest_participants.id)  (cost=2.48 rows=9.72) (actual time=0.044..0.101 rows=25 loops=200)
+                                                        -> Filter: (verdicts.verdict = 'ACCEPTED')  (cost=0.653 rows=0.268) (actual time=0.00521..0.00523 rows=0.254 loops=5000)
+                                                            -> Single-row index lookup on verdicts using uq_verdict_attempt (judge_attempt_id=submissions.authoritative_attempt_id)  (cost=0.653 rows=1) (actual time=0.00485..0.00488 rows=1 loops=5000)
+                                                    -> Single-row covering index lookup on judge_attempts using PRIMARY (id=submissions.authoritative_attempt_id)  (cost=0.252 rows=1) (actual time=0.00576..0.00579 rows=1 loops=1268)
+
+
+=== Plan summary ===
+Use the raw EXPLAIN FORMAT=TREE and EXPLAIN ANALYZE above for index choices, row estimates, actual rows, scans, sorts and elapsed timings.
+This summary intentionally avoids hard-coded estimates and timings so it remains valid when MySQL, indexes or the fixture change.

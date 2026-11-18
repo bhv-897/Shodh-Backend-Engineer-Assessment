@@ -2,6 +2,19 @@
 
 FastAPI / SQLAlchemy 2.0 API for contest setup, submissions and a minimal Python 3.12 judge worker.
 
+## Stage status
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| Stage 1 schema, authentication, organizations, problems, contests and submissions | REAL | MySQL-backed API and Alembic migrations. |
+| Stage 1 verdicts and leaderboard | REAL | Verdict service and authoritative-verdict leaderboard query. |
+| Python stdin judge | REAL | Docker sandbox with compile check, resource limits and bounded output. |
+| Function-style judge drivers | REAL | JSON argument functions and linked-list `ListNode` driver run in the same Docker sandbox. |
+| Outbox worker, leases and bounded recovery | REAL | MySQL polling worker; Docker socket access remains a deployment isolation limit. |
+| Submission idempotency and rejudge | REAL | MySQL constraints and transaction-backed API behavior. |
+| Load-test evidence | PARTIAL | Submission endpoint exercise only; not a capacity or leaderboard benchmark. |
+| Multi-tenant hardened execution isolation | PARTIAL | Requires a dedicated disposable VM or restricted rootless Docker/socket proxy. |
+
 ## Run
 
 1. Create a MySQL 8 database and copy `.env.example` to `.env`; set `DATABASE_URL` and a strong `JWT_SECRET`.
@@ -19,7 +32,7 @@ docker compose run --rm --no-deps worker python -m pytest -q
 docker compose start worker
 ```
 
-Seed judge examples with `docker compose exec api python -m scripts.seed_judge`. The seed creates three problems and queued programs for accepted, wrong answer, runtime error, timeout and output-limit outcomes; verdicts come from the worker.
+Seed examples with `docker compose exec api python -m scripts.seed_dev`. The idempotent seed publishes Two Number Sum, String Rotation, Grid Paths and Reverse Linked List, each with two visible examples and five hidden cases, plus queued sample programs.
 
 ## Isolation and deployment limit
 
