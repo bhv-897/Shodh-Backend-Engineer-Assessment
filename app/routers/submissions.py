@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-import hashlib
+import hashlib, json
 from fastapi import APIRouter, Depends, HTTPException, Response, Query, Header
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
@@ -47,7 +47,11 @@ def submit(cid:int,cpid:int,b:SubmissionCreate,response:Response,idempotency_key
     if not p or p.status!="registered": raise HTTPException(403,"NOT_REGISTERED")
     if b.language.lower()!="python": raise HTTPException(422,"VALIDATION_ERROR")
     if len(b.source_code.encode("utf-8"))>256*1024: raise HTTPException(413,"PAYLOAD_TOO_LARGE")
-    fingerprint=hashlib.sha256((b.source_code+b.language).encode("utf-8")).hexdigest() if idempotency_key is not None else None
+    canonical_request=json.dumps(
+        {"contest_problem_id":cpid,"source_code":b.source_code,"language":b.language},
+        sort_keys=True,separators=(",",":"),ensure_ascii=False,
+    ) if idempotency_key is not None else None
+    fingerprint=hashlib.sha256(canonical_request.encode("utf-8")).hexdigest() if canonical_request is not None else None
     if idempotency_key is not None:
         replay=_replay_idempotent_submission(db,u.id,cid,idempotency_key,fingerprint,response)
         if replay is not None:

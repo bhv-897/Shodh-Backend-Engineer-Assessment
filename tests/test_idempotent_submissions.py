@@ -95,6 +95,37 @@ def test_reused_key_with_different_source_conflicts(client):
     assert changed.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
 
 
+def test_reused_key_with_different_contest_problem_conflicts(client):
+    contest_id, pin_id, headers = create_participant_contest(client)
+    with SessionLocal() as db:
+        original_pin = db.get(ContestProblem, pin_id)
+        original_problem = db.get(Problem, original_pin.problem_id)
+        problem = Problem(organization_id=original_problem.organization_id, title="Second pinned problem")
+        db.add(problem)
+        db.flush()
+        version = ProblemVersion(
+            problem_id=problem.id, version_number=1, statement="s", execution_limits={},
+            runtime_configuration={}, published_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db.add(version)
+        db.flush()
+        suite = DbTestSuite(problem_version_id=version.id, version_number=1, status="active")
+        db.add(suite)
+        db.flush()
+        other_pin = ContestProblem(
+            contest_id=contest_id, organization_id=original_pin.organization_id, problem_id=problem.id,
+            problem_version_id=version.id, test_suite_id=suite.id, display_order=2, points=100,
+        )
+        db.add(other_pin)
+        db.commit()
+        other_pin_id = other_pin.id
+    first = post_submission(client, contest_id, pin_id, headers, "print(1)\n", key="problem-scoped-key")
+    changed_problem = post_submission(client, contest_id, other_pin_id, headers, "print(1)\n", key="problem-scoped-key")
+    assert first.status_code == 201, first.text
+    assert changed_problem.status_code == 409
+    assert changed_problem.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
 def test_ten_concurrent_identical_requests_create_one_submission(client):
     contest_id, pin_id, headers = create_participant_contest(client)
 

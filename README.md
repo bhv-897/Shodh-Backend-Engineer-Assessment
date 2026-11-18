@@ -31,7 +31,7 @@ Submission owners and contest organizers can poll `GET /api/v1/submissions/{id}/
 
 ## Idempotency
 
-Submission requests may include an `Idempotency-Key` header of up to 128 characters. The key is scoped to the authenticated user and contest. Repeating it with the same source and language returns the original submission with HTTP 200 and `Idempotent-Replayed: true`; changing the source or language under that key returns HTTP 409 (`IDEMPOTENCY_KEY_REUSED`). The submission, first attempt, outbox event and key record are committed together. Replays still require the caller to be registered for the contest.
+Submission requests may include an `Idempotency-Key` header of up to 128 characters. The key is scoped to the authenticated user and contest. Its SHA-256 fingerprint is calculated from canonical JSON containing `contest_problem_id`, `source_code` and `language`. Repeating the key with the same values returns the original submission with HTTP 200 and `Idempotent-Replayed: true`; changing any of those values returns HTTP 409 (`IDEMPOTENCY_KEY_REUSED`). The submission, first attempt, outbox event and key record are committed together. Replays still require the caller to be registered for the contest.
 
 ## Security boundaries
 
@@ -41,6 +41,7 @@ The API hides submissions across organization and participant boundaries:
 - A participant calling the organizer-only participant list receives **404** because non-members cannot see the organization resource.
 - A participant reading another participant's submission receives **404**.
 - A participant reading their own result receives **200** with verdict and public message only; hidden case details, expected output and private stderr are omitted.
+- An organizer (not an owner) adding or changing an organization member receives **403**; a non-member receives **404**.
 
 ## Known limits
 

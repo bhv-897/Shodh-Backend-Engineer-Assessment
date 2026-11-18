@@ -125,6 +125,23 @@ def test_participant_gets_404_from_organizer_only_participant_list(client):
     assert client.get(f"/api/v1/contests/{contest_id}/participants", headers=participant_headers).status_code == 404
 
 
+def test_owner_only_member_endpoint_returns_403_for_organizer_and_404_for_nonmember(client):
+    _, owner_headers = new_auth_user(client, "membership-owner")
+    organizer_email, organizer_headers = new_auth_user(client, "membership-organizer")
+    _, nonmember_headers = new_auth_user(client, "membership-nonmember")
+    organization = client.post("/api/v1/organizations", headers=owner_headers, json={"name": f"Role check {uuid4().hex}"})
+    assert organization.status_code == 201, organization.text
+    org_id = organization.json()["id"]
+    added = client.post(
+        f"/api/v1/organizations/{org_id}/members", headers=owner_headers,
+        json={"email": organizer_email, "role": "organizer"},
+    )
+    assert added.status_code == 201, added.text
+    request = {"email": f"target-{uuid4().hex}@example.test", "role": "member"}
+    assert client.post(f"/api/v1/organizations/{org_id}/members", headers=organizer_headers, json=request).status_code == 403
+    assert client.post(f"/api/v1/organizations/{org_id}/members", headers=nonmember_headers, json=request).status_code == 404
+
+
 def test_participant_gets_404_for_another_participants_submission(client):
     _, owner_headers = new_auth_user(client, "same-contest-owner")
     _, reader_headers = new_auth_user(client, "submission-reader")
