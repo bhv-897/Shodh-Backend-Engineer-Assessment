@@ -26,6 +26,7 @@
 - **REAL — fixture/plan run:** `scripts/seed_perf.py` reused contest 403 with 200 participants, 3 problems, and 5,000 submissions/authoritative attempts/verdicts. Raw baseline and after `EXPLAIN FORMAT=TREE` and `EXPLAIN ANALYZE` output is in [bottleneck.txt](evidence/bottleneck.txt).
 - **REAL — targeted change:** Alembic 0005 extends `ix_submissions_participant_problem_submitted` with `authoritative_attempt_id`. The after-plan shows covering index lookups in both submission access paths. On the measured EXPLAIN run, total query time changed from 90.2 ms to 72.0 ms.
 - **PARTIAL — HTTP latency:** one 200-request run (10 concurrent clients, 20 requests each) measured p50/p95 of 170.598/286.068 ms before and 232.382/401.561 ms after, with zero HTTP errors in each run. These runs did not show an end-to-end latency improvement; the SQL plan result does not justify claiming that they did. The 5,000-submission fixture is not a production-capacity benchmark.
+- **REAL — load test:** 10 concurrent clients for 30.07 s against `POST /submissions` (clean-clone run): 2,494 requests, 82.95 req/s, p50 117.38 ms, p95 147.21 ms, p99 172.39 ms, 0 errors, execution mode docker-python. Raw output: `docs/evidence/load_test.txt`.
 
 ## Investigated failure
 
