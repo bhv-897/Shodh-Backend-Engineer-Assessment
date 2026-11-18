@@ -169,4 +169,19 @@ class JudgeCaseResult(Base):
     execution_time_ms: Mapped[int|None]=mapped_column(Integer)
     created_at: Mapped[datetime]=mapped_column(DateTime(6), server_default=func.utc_timestamp(6), nullable=False)
 
+class IdempotencyRecord(Base):
+    __tablename__="idempotency_records"
+    __table_args__=(
+        UniqueConstraint("user_id","contest_id","idempotency_key",name="uq_idempotency_user_contest_key"),
+        UniqueConstraint("submission_id",name="uq_idempotency_submission"),
+        Index("ix_idempotency_contest_created","contest_id","created_at","id"),
+    )
+    id: Mapped[int]=mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey("users.id"), nullable=False)
+    contest_id: Mapped[int]=mapped_column(ForeignKey("contests.id"), nullable=False)
+    idempotency_key: Mapped[str]=mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str]=mapped_column(String(64), nullable=False)
+    submission_id: Mapped[int]=mapped_column(ForeignKey("submissions.id"), nullable=False)
+    created_at: Mapped[datetime]=mapped_column(DateTime(6), server_default=func.utc_timestamp(6), nullable=False)
+
 # Added after judge_attempts exists in migration 0001 (intentional circular reference).

@@ -1,11 +1,13 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Response, Query
+import hashlib
+from fastapi import APIRouter, Depends, HTTPException, Response, Query, Header
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.auth import get_current_user
 from app.config import settings
-from app.models import User, Contest, ContestParticipant, ContestProblem, ProblemVersion, Submission, JudgeAttempt, Verdict, OutboxEvent, JudgeCaseResult, TestCase
+from app.models import User, Contest, ContestParticipant, ContestProblem, ProblemVersion, Submission, JudgeAttempt, Verdict, OutboxEvent, JudgeCaseResult, TestCase, IdempotencyRecord
 from app.schemas import SubmissionCreate, VerdictCreate
 from app.permissions import get_role, page
 from app.services.verdicts import record_verdict
@@ -18,22 +20,63 @@ def owned_or_organizer(db,u,s):
     c=db.get(Contest,s.contest_id)
     if c and get_role(db,u.id,c.organization_id) in {"owner","organizer"}: return
     raise HTTPException(404,"NOT_FOUND")
+def _replay_idempotent_submission(db, user_id, contest_id, key, fingerprint, response):
+    record=db.scalar(select(IdempotencyRecord).where(
+        IdempotencyRecord.user_id==user_id,
+        IdempotencyRecord.contest_id==contest_id,
+        IdempotencyRecord.idempotency_key==key,
+    ))
+    if not record:
+        return None
+    if record.request_fingerprint != fingerprint:
+        raise HTTPException(409,"IDEMPOTENCY_KEY_REUSED")
+    submission=db.get(Submission,record.submission_id)
+    if submission is None:
+        return None
+    response.status_code=200
+    response.headers["Idempotent-Replayed"]="true"
+    return submission
+
 @router.post("/contests/{cid}/problems/{cpid}/submissions",status_code=201)
-def submit(cid:int,cpid:int,b:SubmissionCreate,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
+def submit(cid:int,cpid:int,b:SubmissionCreate,response:Response,idempotency_key:str|None=Header(default=None,alias="Idempotency-Key",max_length=128),u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     c=db.execute(select(Contest).where(Contest.id==cid).with_for_update()).scalar_one_or_none(); cp=db.scalar(select(ContestProblem).where(ContestProblem.id==cpid,ContestProblem.contest_id==cid))
     if not c or not cp: raise HTTPException(404,"NOT_FOUND")
     now=utcnow()
     if c.status!="published" or not(c.start_time<=now<=c.end_time): raise HTTPException(409,"CONTEST_NOT_OPEN")
-    p=db.scalar(select(ContestParticipant).where(ContestParticipant.contest_id==cid,ContestParticipant.user_id==u.id))
+    p=db.scalar(select(ContestParticipant).where(ContestParticipant.contest_id==cid,ContestParticipant.user_id==u.id).with_for_update())
     if not p or p.status!="registered": raise HTTPException(403,"NOT_REGISTERED")
     if b.language.lower()!="python": raise HTTPException(422,"VALIDATION_ERROR")
     if len(b.source_code.encode("utf-8"))>256*1024: raise HTTPException(413,"PAYLOAD_TOO_LARGE")
+    fingerprint=hashlib.sha256((b.source_code+b.language).encode("utf-8")).hexdigest() if idempotency_key is not None else None
+    if idempotency_key is not None:
+        replay=_replay_idempotent_submission(db,u.id,cid,idempotency_key,fingerprint,response)
+        if replay is not None:
+            return replay
     # Serialize the submission/attempt write in a single transaction.
     version=db.get(ProblemVersion,cp.problem_version_id)
     s=Submission(contest_participant_id=p.id,contest_id=cid,contest_problem_id=cp.id,problem_version_id=cp.problem_version_id,test_suite_id=cp.test_suite_id,source_code=b.source_code,language="python",runtime_config_snapshot=version.runtime_configuration)
     db.add(s); db.flush(); a=JudgeAttempt(submission_id=s.id,attempt_number=1,reason="initial",requested_by_user_id=u.id,status="queued"); db.add(a); db.flush()
     db.add(OutboxEvent(judge_attempt_id=a.id,event_type="judge.requested",status="pending"))
-    db.commit(); db.refresh(s); return s
+    if idempotency_key is not None:
+        db.add(IdempotencyRecord(user_id=u.id,contest_id=cid,idempotency_key=idempotency_key,
+                                 request_fingerprint=fingerprint,submission_id=s.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if idempotency_key is not None:
+            # Recheck registration after rollback before returning any prior submission.
+            registered=db.scalar(select(ContestParticipant.id).where(
+                ContestParticipant.contest_id==cid,ContestParticipant.user_id==u.id,
+                ContestParticipant.status=="registered",
+            ))
+            if not registered:
+                raise HTTPException(403,"NOT_REGISTERED")
+            replay=_replay_idempotent_submission(db,u.id,cid,idempotency_key,fingerprint,response)
+            if replay is not None:
+                return replay
+        raise
+    db.refresh(s); return s
 @router.get("/contests/{cid}/submissions")
 def contest_submissions(cid:int,limit:int=Query(20,ge=1,le=100),cursor:str|None=None,u:User=Depends(get_current_user),db:Session=Depends(get_db)):
     c=db.get(Contest,cid)
